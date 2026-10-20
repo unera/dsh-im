@@ -405,6 +405,15 @@ export class TelegramApi {
     }, { signal });
   }
 
+  /** Telegram notifies on new messages only, never on edits, so dropping the
+   *  progress placeholder takes a delete rather than a rewrite. */
+  async deleteMessage({ chatId, messageId, signal }) {
+    return this.#call('deleteMessage', {
+      chat_id: chatId,
+      message_id: messageId,
+    }, { signal });
+  }
+
   async sendChatAction({ chatId, messageThreadId, signal }) {
     return this.#call('sendChatAction', {
       chat_id: chatId,

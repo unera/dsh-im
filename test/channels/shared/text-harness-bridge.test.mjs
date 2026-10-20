@@ -2923,6 +2923,49 @@ test('shared bridge keepalives a short-lived draft stream and stops the timer on
   assert.equal(typings.length, typingAt, 'no typing after the turn ends');
 });
 
+test('shared bridge keeps answer text out of a carrier that delivers it separately', async () => {
+  const fixture = stateFixture();
+  const updates = [];
+  const finishes = [];
+  const bridge = new TextHarnessBridge({
+    descriptor: { key: 'test', label: 'Test' },
+    bot: {
+      sendText: async () => 'done',
+      openDeliveryStream: async () => ({
+        previewAnswer: false,
+        update: async (block) => { updates.push(block); },
+        finish: async (block) => { finishes.push(block); },
+        fail: async () => undefined,
+      }),
+    },
+    harness: {
+      createSession: async () => 'session-preview',
+      ask: async (_sessionId, _text, askOptions) => {
+        askOptions.onUpdate({ type: 'text', text: 'half an answer' });
+        askOptions.onUpdate({ type: 'tool', name: 'bash' });
+        return 'the final answer';
+      },
+    },
+    state: fixture.state,
+    logger: { warn() {}, error() {} },
+  });
+
+  await bridge.accept(message('preview-answer', '跑一个任务'));
+
+  assert.equal(
+    updates.some((block) => block.text === 'half an answer'),
+    false,
+    'answer text never reaches a carrier that will send it as its own message',
+  );
+  assert.equal(
+    updates.some((block) => String(block.text).includes('bash')),
+    true,
+    'tool progress still reaches the placeholder',
+  );
+  assert.equal(finishes.length, 1, 'the answer is delivered once, at the end');
+  assert.equal(finishes[0].text, 'the final answer');
+});
+
 test('shared bridge passes a markdown delivery block to the thinking stream finish', async () => {
   const fixture = stateFixture();
   const finished = [];
@@ -3047,6 +3090,7 @@ test('Telegram questions remain answerable during a pending placeholder edit wit
   const drafts = [];
   const messages = [];
   const edits = [];
+  const deleted = [];
   let options;
   const target = { chatId: 42, chatType: 'private' };
   const bot = new TelegramBotClient({
@@ -3057,6 +3101,11 @@ test('Telegram questions remain answerable during a pending placeholder edit wit
         messages.push(payload);
         return { message_id: 198 + messages.length };
       },
+      sendRichMessage: async (payload) => {
+        messages.push({ text: payload.richMessage?.markdown });
+        return { message_id: 198 + messages.length };
+      },
+      deleteMessage: async (payload) => { deleted.push(payload.messageId); return true; },
       editMessageText: async (payload) => {
         edits.push(payload);
         if (edits.length === 1) await editGate.promise;
@@ -3083,7 +3132,7 @@ test('Telegram questions remain answerable during a pending placeholder edit wit
     await processing;
   });
   await eventually(() => options !== undefined);
-  const pendingEdit = options.onUpdate({ type: 'text', text: 'Thinking about the choices' });
+  const pendingEdit = options.onUpdate({ type: 'tool', name: 'bash' });
   await eventually(() => edits.length === 1);
   await options.onInteraction(questionInteraction({
     questions: [{ id: 'color', question: 'Choose a color', options: [{ label: 'Blue' }, { label: 'Green' }] }],
@@ -3103,9 +3152,10 @@ test('Telegram questions remain answerable during a pending placeholder edit wit
   await bridge.accept(message('placeholder-answer', '2', { replyTarget: target }));
   editGate.resolve();
   await Promise.all([pendingEdit, processing]);
-  assert.equal(edits.length, 2);
-  assert.equal(edits[1].messageId, 199);
-  assert.equal(edits[1].richMessage.markdown, 'ISSUE199_DONE Green');
+  assert.equal(edits.length, 1, 'the answer never rewrites the placeholder');
+  assert.equal(edits[0].messageId, 199);
+  assert.ok(messages.some(({ text }) => text === 'ISSUE199_DONE Green'), 'the answer is a new message');
+  assert.deepEqual(deleted, [199], 'the finished turn drops its placeholder');
   assert.equal(drafts.length, 0);
 });
 

@@ -1308,6 +1308,10 @@ export class TextHarnessBridge {
               return;
             }
             if (update.type === 'reasoning') return;
+            // A carrier that delivers the answer as its own message must not
+            // stream that answer into itself first: the reader would see the
+            // reply twice, and every preview costs an edit.
+            if (update.type === 'text' && stream.previewAnswer === false) return;
             const progress = update.type === 'text' ? update.text
               : update.type === 'tool' ? t('正在使用{name}…', { name: update.name }) : update.text;
             if (progress) {

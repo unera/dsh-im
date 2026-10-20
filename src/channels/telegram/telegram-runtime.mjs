@@ -365,11 +365,6 @@ function telegramMessageId(value) {
   return Number.isSafeInteger(value?.message_id) ? String(value.message_id) : null;
 }
 
-function telegramMessageUnchanged(error) {
-  return error?.providerCode === 400
-    && /^(?:Bad Request: )?message is not modified(?::|$)/iu.test(error?.message ?? '');
-}
-
 function telegramFailure(error) {
   const providerCode = Number(error?.providerCode);
   const status = Number(error?.status);
@@ -405,6 +400,7 @@ class TelegramDeliveryStream {
   #lastUpdate = null;
   #lastBlock = null;
   #keepalive = false;
+  #previewAnswer = true;
   #previewStopped = false;
   #chain = Promise.resolve();
 
@@ -416,6 +412,7 @@ class TelegramDeliveryStream {
     presentation,
     logger,
     keepalive = false,
+    previewAnswer = true,
   }) {
     this.#update = update;
     this.#finish = finish;
@@ -427,6 +424,15 @@ class TelegramDeliveryStream {
     // keepalive refresh; editing a real placeholder message with identical
     // content would be rejected by the platform.
     this.#keepalive = keepalive === true;
+    // The placeholder is deleted before the answer is sent, so mirroring the
+    // answer text into it would show the same reply twice: first as a run of
+    // edits, then again as the delivered message.
+    this.#previewAnswer = previewAnswer !== false;
+  }
+
+  /** Whether answer text may be shown in the carrier before it is delivered. */
+  get previewAnswer() {
+    return this.#previewAnswer;
   }
 
   get providerMessageIds() {
@@ -687,63 +693,14 @@ export class TelegramBotClient {
     });
   }
 
-  async #sendPlain(target, text, { placeholderMessageId } = {}) {
+  async #sendPlain(target, text) {
     const chunks = splitTelegramRegularText(text);
-    const providerMessageIds = placeholderMessageId === undefined
-      ? []
-      : [String(placeholderMessageId)];
-    let firstUnsent = 0;
-    if (placeholderMessageId !== undefined) {
-      try {
-        await this.#api.editMessageText({
-          chatId: target.chatId,
-          messageId: placeholderMessageId,
-          text: chunks[0],
-          signal: this.#signal,
-        }).catch((error) => {
-          // The final answer may already be visible from the last progress edit.
-          if (!telegramMessageUnchanged(error)) throw error;
-        });
-        firstUnsent = 1;
-      } catch (error) {
-        const failure = telegramFailure(error);
-        if (failure.outcome === 'unknown') {
-          return deliveryResult('text-fallback', providerMessageIds, 'unknown', failure.reason);
-        }
-
-        const fallback = await this.#sendPlain(target, text);
-        const terminalText = fallback.deliveryOutcome === 'sent'
-          ? t('回复已发送。')
-          : fallback.deliveryOutcome === 'unknown'
-            ? t('回复发送结果未能确认。')
-            : t('消息发送失败，请稍后重试。');
-        try {
-          await this.#api.editMessageText({
-            chatId: target.chatId,
-            messageId: placeholderMessageId,
-            text: terminalText,
-            signal: this.#signal,
-          });
-        } catch (terminalError) {
-          this.#logger.warn?.(
-            '[dsh-im:telegram] unable to replace the processing placeholder:',
-            terminalError,
-          );
-        }
-        return deliveryResult(
-          'text-fallback',
-          [...providerMessageIds, ...fallback.providerMessageIds],
-          fallback.deliveryOutcome,
-          fallback.reason,
-        );
-      }
-    }
-
-    for (let index = firstUnsent; index < chunks.length; index += 1) {
+    const providerMessageIds = [];
+    for (const [index, chunk] of chunks.entries()) {
       try {
         const result = await this.#api.sendMessage({
           chatId: target.chatId,
-          text: chunks[index],
+          text: chunk,
           replyToMessageId: index === 0 ? target.replyToMessageId : undefined,
           messageThreadId: target.messageThreadId,
           signal: this.#signal,
@@ -761,6 +718,25 @@ export class TelegramBotClient {
       }
     }
     return deliveryResult('text-fallback', providerMessageIds);
+  }
+
+  /** Drop the progress placeholder before the answer is sent so the turn ends
+   *  with a notification instead of a silent edit. Best-effort: Telegram only
+   *  lets a bot delete its own messages for 48 hours, and a stale placeholder
+   *  must never cost the reader the answer that was already produced. */
+  async #deletePlaceholder(target, messageId) {
+    try {
+      await this.#api.deleteMessage({
+        chatId: target.chatId,
+        messageId,
+        signal: this.#signal,
+      });
+    } catch (error) {
+      this.#logger.warn?.(
+        '[dsh-im:telegram] unable to delete the processing placeholder:',
+        error,
+      );
+    }
   }
 
   async #sendRich(target, block) {
@@ -811,78 +787,6 @@ export class TelegramBotClient {
     return deliveryResult('telegram-rich-final', providerMessageIds);
   }
 
-  async #editRich(target, messageId, block) {
-    if (block.format === 'plain') {
-      return this.#sendPlain(target, block.text, {
-        placeholderMessageId: messageId,
-      });
-    }
-
-    let chunks;
-    try {
-      chunks = splitTelegramRichMarkdown(block.text);
-    } catch {
-      return this.#sendPlain(target, block.text, { placeholderMessageId: messageId });
-    }
-    const providerMessageIds = [String(messageId)];
-    try {
-      await this.#api.editMessageText({
-        chatId: target.chatId,
-        messageId,
-        richMessage: { markdown: chunks[0].markdown },
-        signal: this.#signal,
-      }).catch((error) => {
-        if (!telegramMessageUnchanged(error)) throw error;
-      });
-    } catch (error) {
-      const failure = telegramFailure(error);
-      if (failure.outcome === 'unknown') {
-        return deliveryResult(
-          'telegram-rich-final',
-          providerMessageIds,
-          'unknown',
-          failure.reason,
-        );
-      }
-      return this.#sendPlain(target, block.text, { placeholderMessageId: messageId });
-    }
-
-    for (const [offset, chunk] of chunks.slice(1).entries()) {
-      try {
-        const result = await this.#api.sendRichMessage({
-          chatId: target.chatId,
-          richMessage: { markdown: chunk.markdown },
-          messageThreadId: target.messageThreadId,
-          signal: this.#signal,
-        });
-        const id = telegramMessageId(result);
-        if (id) providerMessageIds.push(id);
-      } catch (error) {
-        const failure = telegramFailure(error);
-        if (failure.outcome === 'unknown') {
-          return deliveryResult(
-            'telegram-rich-final',
-            providerMessageIds,
-            'unknown',
-            failure.reason,
-          );
-        }
-        const remaining = chunks.slice(offset + 1).map((part) => part.source).join('');
-        const fallback = await this.#sendPlain({
-          ...target,
-          replyToMessageId: undefined,
-        }, remaining);
-        return deliveryResult(
-          fallback.presentation,
-          [...providerMessageIds, ...fallback.providerMessageIds],
-          fallback.deliveryOutcome,
-          fallback.reason,
-        );
-      }
-    }
-    return deliveryResult('telegram-rich-final', providerMessageIds);
-  }
-
   sendDelivery(target, value) {
     return this.#sendRich(target, createTextDeliveryBlock(value));
   }
@@ -920,12 +824,21 @@ export class TelegramBotClient {
         });
         return deliveryResult('telegram-rich-draft', [String(messageId)]);
       },
-      finish: (block) => this.#editRich(target, messageId, block),
-      fail: (block) => this.#sendPlain(target, block.text, {
-        placeholderMessageId: messageId,
-      }),
-      providerMessageIds: [String(messageId)],
+      // The placeholder carries progress only: its last frame would be a silent
+      // edit, so the answer goes out as its own message and Telegram notifies
+      // the reader that the turn is over.
+      finish: async (block) => {
+        await this.#deletePlaceholder(target, messageId);
+        return this.#sendRich(target, block);
+      },
+      fail: async (block) => {
+        await this.#deletePlaceholder(target, messageId);
+        return this.#sendPlain(target, block.text);
+      },
       presentation: 'telegram-regular',
+      // Answer text is not mirrored into the placeholder: it is deleted before
+      // the real message goes out, so a preview would duplicate the reply.
+      previewAnswer: false,
       logger: this.#logger,
     });
   }
