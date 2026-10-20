@@ -20,8 +20,11 @@ export function groupHistoryEntry(channel, raw, message, { scope = '', groupName
     type: message.files?.length ? 'file' : message.images?.length ? 'image' : 'text' };
   if (channel === 'telegram') {
     const item = raw.message;
+    // A voice message carries no text on the platform: the archived copy keeps
+    // the transcript the channel produced, so history matches what the model saw.
+    const text = item.text ?? item.caption ?? message.content ?? '';
     return { ...common, groupId: String(item.chat.id), groupName: item.chat.title,
-      messageId: String(item.message_id), sentAt: item.date * 1000, text: item.text ?? item.caption ?? '',
+      messageId: String(item.message_id), sentAt: item.date * 1000, text,
       threadId: item.message_thread_id === undefined ? undefined : String(item.message_thread_id),
       replyToMessageId: item.reply_to_message?.message_id === undefined ? undefined : String(item.reply_to_message.message_id),
       type: item.document ? 'file' : item.photo ? 'image' : 'text',

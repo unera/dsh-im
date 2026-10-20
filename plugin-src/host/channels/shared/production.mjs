@@ -189,6 +189,11 @@ export async function createTokenProductionController(ctx, config, internals, de
         harness: workspaceScope.harness,
         state: workspaceScope.state,
         groupHistory: internals.groupHistory ?? (['telegram', 'discord'].includes(channel) ? getGroupHistoryStore(ctx, config) : undefined),
+        // A transport that carries voice notes composes its own transcriber
+        // from Host services; without one voice messages stay textless.
+        ...(typeof definitions.createVoiceTranscriber === 'function'
+          ? { voice: definitions.createVoiceTranscriber(ctx, config, internals) }
+          : {}),
         contextEnhancement: { botId, getSettings: () => workspaces.contextEnhancementFor(botId) },
         accessPolicy: accessPolicyProvider(workspaces, botId, { channel, config: botConfig }),
         replyTimeoutMs: config.replyTimeoutMs ?? 600_000,

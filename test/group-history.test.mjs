@@ -174,6 +174,31 @@ test('Telegram/Slack use source message identity, not delivery or thread identit
   assert.equal(slack.groupId, 'C1'); assert.equal(slack.messageId, '1700000000.1');
 });
 
+test('a Telegram voice message is archived with its transcript', () => {
+  const voice = groupHistoryEntry('telegram', {
+    update_id: 21,
+    message: {
+      message_id: 11,
+      chat: { id: -1, title: 'Team' },
+      date: 1_700_000_000,
+      voice: { file_id: 'v1', duration: 3, mime_type: 'audio/ogg' },
+    },
+  }, {
+    senderId: 'person',
+    kind: 'group',
+    content: 'это именно звуковое сообщение — не текст',
+    voice: { fileId: 'v1' },
+  });
+  assert.equal(voice.text, 'это именно звуковое сообщение — не текст');
+  assert.equal(voice.type, 'text');
+  // A plain text message still uses the platform text, not the normalized copy.
+  const plain = groupHistoryEntry('telegram', {
+    update_id: 22,
+    message: { message_id: 12, chat: { id: -1 }, date: 1_700_000_001, text: 'hello' },
+  }, { senderId: 'person', kind: 'group', content: 'hello' });
+  assert.equal(plain.text, 'hello');
+});
+
 test('host-bound access rejects invented, ended, Web, mixed-group and switched-session requests', async () => {
   const registry = new GroupHistoryAccessRegistry();
   const store = { query: async (groupId) => ({ groupId }) };
