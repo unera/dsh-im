@@ -20,6 +20,8 @@ import {
   toTelegramRichMarkdown,
 } from './telegram-rich-message.mjs';
 import {
+  normalizeThinkingIntervalSeconds,
+  normalizeThinkingNumbering,
   TELEGRAM_ACCESS_MODES,
 } from './config-store.mjs';
 
@@ -651,11 +653,22 @@ export class TelegramBotClient {
   #api;
   #signal;
   #logger;
+  #thinkingNumbering;
+  #thinkingIntervalMs;
 
-  constructor({ api, signal, logger = console }) {
+  constructor({
+    api,
+    signal,
+    logger = console,
+    thinkingNumbering = false,
+    thinkingIntervalSeconds = 0,
+  }) {
     this.#api = api;
     this.#signal = signal;
     this.#logger = logger;
+    // Read once: the runtime restarts whenever the owner changes either value.
+    this.#thinkingNumbering = normalizeThinkingNumbering(thinkingNumbering);
+    this.#thinkingIntervalMs = normalizeThinkingIntervalSeconds(thinkingIntervalSeconds) * 1_000;
   }
 
   async sendText(target, text) {
@@ -954,6 +967,14 @@ export class TelegramBotClient {
     const providerMessageIds = [];
     let firstMessageId = null;
     let closed = false;
+    // Numbering counts every frame of the turn, paced-away ones included, so the
+    // gaps in the visible numbers tell how much was held back.
+    const numbering = this.#thinkingNumbering;
+    const intervalMs = this.#thinkingIntervalMs;
+    let sequence = 0;
+    let held = null;
+    let windowTimer = null;
+    let windowEndsAt = 0;
     const logger = this.#logger;
     const warnFailure = (label, error) => {
       logger?.warn?.(`[dsh-im:telegram] thinking stream ${label} failed:`, error);
@@ -972,6 +993,66 @@ export class TelegramBotClient {
         providerMessageIds.push(String(id));
       }
     };
+    const deliver = async (label, text) => {
+      try {
+        await sendLine(text);
+      } catch (error) {
+        warnFailure(label, error);
+      }
+    };
+    // Trace sends run in the background: the window timer starts one and nobody
+    // awaits it, so finish() would otherwise find an empty buffer and let the
+    // answer overtake a trace request that is still on the wire.
+    const inFlight = new Set();
+    const track = (label, text) => {
+      const send = deliver(label, text).finally(() => { inFlight.delete(send); });
+      inFlight.add(send);
+      return send;
+    };
+    // Settling one send can release another (a held frame), so drain in a loop.
+    const settleInFlight = async () => {
+      while (inFlight.size > 0) await Promise.all([...inFlight]);
+    };
+    const clearWindowTimer = () => {
+      if (windowTimer === null) return;
+      clearTimeout(windowTimer);
+      windowTimer = null;
+    };
+    const sendHeld = () => {
+      const frame = held;
+      held = null;
+      return frame ? track(frame.label, frame.text) : Promise.resolve();
+    };
+    const armWindowTimer = () => {
+      if (windowTimer !== null) return;
+      windowTimer = setTimeout(() => {
+        windowTimer = null;
+        windowEndsAt = Date.now() + intervalMs;
+        // The window keeps only the newest frame, so a burst collapses to one
+        // message instead of a queue of frames nobody wants to read.
+        void sendHeld();
+      }, Math.max(0, windowEndsAt - Date.now()));
+    };
+    /** One frame: immediate outside a window, otherwise the newest held one. */
+    const emit = (label, text) => {
+      if (closed) return Promise.resolve();
+      sequence += 1;
+      const frame = { label, text: numbering ? `${sequence} ${text}` : text };
+      if (intervalMs <= 0) return track(frame.label, frame.text);
+      if (Date.now() >= windowEndsAt) {
+        // The deadline has passed but its timer may not have run yet, and that
+        // callback would deliver the frame this newer one supersedes. Drop both
+        // the held frame and its timer before letting the new frame through.
+        clearWindowTimer();
+        held = null;
+        windowEndsAt = Date.now() + intervalMs;
+        return track(frame.label, frame.text);
+      }
+      // Inside the window: replace whatever waited, never append.
+      held = frame;
+      armWindowTimer();
+      return Promise.resolve();
+    };
     return {
       get messageId() {
         return firstMessageId;
@@ -986,27 +1067,21 @@ export class TelegramBotClient {
       update: async () => {},
       refresh: async () => {},
       sendLine,
-      sendToolTrace: (name, argumentsValue) => (async () => {
-        if (closed) return;
-        try {
-          await sendLine(formatToolTrace(name, argumentsValue));
-        } catch (error) {
-          warnFailure('tool trace', error);
-        }
-      })(),
-      sendThinking: (text) => (async () => {
-        if (closed) return;
+      sendToolTrace: (name, argumentsValue) => emit('tool trace', formatToolTrace(name, argumentsValue)),
+      sendThinking: (text) => {
         const line = formatThinkingLine(text);
-        if (!line) return;
-        try {
-          await sendLine(line);
-        } catch (error) {
-          warnFailure('thinking line', error);
-        }
-      })(),
+        return line ? emit('thinking line', line) : Promise.resolve();
+      },
       async finish(answer) {
         if (closed) throw new Error('Message stream is already closed');
         closed = true;
+        // The held frame is the last thing the turn thought about, so it goes
+        // out before the answer instead of after its own result. Then wait for
+        // every trace still in flight, so none can land behind the answer; the
+        // trace sends are already best-effort and never reject.
+        clearWindowTimer();
+        await sendHeld();
+        await settleInFlight();
         const format = answer && typeof answer === 'object' && answer.format === 'markdown'
           ? 'markdown'
           : 'plain';
@@ -1075,6 +1150,9 @@ export class TelegramBotClient {
       },
       cancel() {
         closed = true;
+        // A cancelled turn must not leave a timer that sends a stale frame.
+        clearWindowTimer();
+        held = null;
       },
     };
   }
@@ -1274,6 +1352,9 @@ export class TelegramRuntime {
         api,
         signal: controller.signal,
         logger: this.#logger,
+        // Trace frames are numbered and paced per bot; 0 seconds means no pacing.
+        thinkingNumbering: this.#config?.thinkingNumbering,
+        thinkingIntervalSeconds: this.#config?.thinkingIntervalSeconds,
       });
       this.#bridge = new TelegramHarnessBridge({
         bot: client,

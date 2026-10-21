@@ -17,6 +17,7 @@ import {
 } from './agent-preset-rpc.mjs';
 import { SET_MODEL_ENDPOINT, validModelPayload } from './model-setting-rpc.mjs';
 import { SET_THINKING_TRACES_ENDPOINT, validThinkingTracesPayload } from './thinking-traces-rpc.mjs';
+import { SET_THINKING_CADENCE_ENDPOINT, validThinkingCadencePayload } from './thinking-cadence-rpc.mjs';
 
 export const TOKEN_BOT_ENDPOINTS = Object.freeze({
   status: 'connection.status',
@@ -31,6 +32,7 @@ export const TOKEN_BOT_ENDPOINTS = Object.freeze({
   setAccessPolicy: SET_ACCESS_POLICY_ENDPOINT,
   setAlias: SET_ALIAS_ENDPOINT,
   setThinkingTraces: SET_THINKING_TRACES_ENDPOINT,
+  setThinkingCadence: SET_THINKING_CADENCE_ENDPOINT,
 });
 
 const ENDPOINTS = Object.freeze(Object.values(TOKEN_BOT_ENDPOINTS));
@@ -108,6 +110,10 @@ function payloadFailure(endpoint, payload) {
   if (endpoint === TOKEN_BOT_ENDPOINTS.setThinkingTraces) {
     return validThinkingTracesPayload(payload)
       ? null : '请提交有效的思考过程留痕设置。';
+  }
+  if (endpoint === TOKEN_BOT_ENDPOINTS.setThinkingCadence) {
+    return validThinkingCadencePayload(payload)
+      ? null : '请提交有效的思考帧节奏设置。';
   }
   return 'Unknown bot endpoint.';
 }
@@ -212,6 +218,12 @@ export function createTokenBotRpcHandler(controller, { channel }) {
       } else if (endpoint === TOKEN_BOT_ENDPOINTS.setThinkingTraces) {
         if (typeof controller.setThinkingTraces !== 'function') throw new Error('Thinking traces update is unavailable');
         value = await controller.setThinkingTraces(payload.botId, payload.thinkingTraces);
+      } else if (endpoint === TOKEN_BOT_ENDPOINTS.setThinkingCadence) {
+        if (typeof controller.setThinkingCadence !== 'function') throw new Error('Thinking trace cadence update is unavailable');
+        value = await controller.setThinkingCadence(payload.botId, {
+          thinkingNumbering: payload.thinkingNumbering,
+          thinkingIntervalSeconds: payload.thinkingIntervalSeconds,
+        });
       } else {
         value = await controller.deleteBot(payload.botId);
       }
