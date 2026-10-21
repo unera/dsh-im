@@ -1,10 +1,18 @@
 import { fetchFileStream } from '../shared/file-download.mjs';
 import { fetchImageBuffer } from '../shared/image-prompt.mjs';
 import { t } from '../shared/i18n.mjs';
+import { DEFAULT_SEND_LIMIT_PER_MINUTE } from '../shared/send-limit.mjs';
 
 const DEFAULT_BASE_URL = 'https://api.telegram.org/';
 const TELEGRAM_FILE_HOSTS = Object.freeze(['api.telegram.org']);
 const DEFAULT_FILE_UPLOAD_TIMEOUT_MS = 120_000;
+
+/** Telegram budgets new messages per chat, so the window is not configurable. */
+const SEND_WINDOW_MS = 60_000;
+/** One original call plus three retries after 429. */
+const MAX_SEND_ATTEMPTS = 4;
+/** A 429 that asks for more than this is reported instead of waited out. */
+const MAX_RATE_LIMIT_WAIT_MS = 60_000;
 
 function cleanString(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -24,6 +32,36 @@ function abortReason(signal) {
 function positiveTimeout(value, name) {
   if (!Number.isInteger(value) || value < 1) throw new TypeError(`${name} must be a positive integer`);
   return value;
+}
+
+/** Resolve after `ms`, or reject as soon as the caller aborts. */
+function waitForDelay(ms, signal) {
+  if (!(ms > 0)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortReason(signal));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener?.('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener?.('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * Seconds Telegram asked us to wait, or null when the error is not a 429.
+ *
+ * Only message-creating calls are retried; a 429 on an edit or a draft means a
+ * skipped stream frame, not a lost message.
+ */
+function rateLimitRetryAfter(error) {
+  if (error?.providerCode !== 429 && error?.status !== 429 && error?.code !== 'telegram-429') {
+    return null;
+  }
+  const seconds = Number(error?.retry_after);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : 1;
 }
 
 function preserveProviderMetadata(target, source) {
@@ -152,6 +190,12 @@ export class TelegramApi {
   #FormDataImpl;
   #baseUrl;
   #fileUploadTimeoutMs;
+  #sendLimit;
+  #logger;
+  // Per chat: timestamps of the messages this bot created in the last window.
+  #sendTimestamps = new Map();
+  // Per chat: tail of the send queue, so parallel callers share one budget.
+  #sendQueue = new Map();
 
   constructor({
     token,
@@ -159,6 +203,8 @@ export class TelegramApi {
     FormDataImpl = globalThis.FormData,
     baseUrl = DEFAULT_BASE_URL,
     fileUploadTimeoutMs = DEFAULT_FILE_UPLOAD_TIMEOUT_MS,
+    sendLimitPerMinute = DEFAULT_SEND_LIMIT_PER_MINUTE,
+    logger = null,
   }) {
     if (!validTelegramToken(token)) throw new TypeError('Telegram Bot Token is invalid');
     if (typeof fetchImpl !== 'function') throw new TypeError('TelegramApi requires fetch');
@@ -168,6 +214,10 @@ export class TelegramApi {
     this.#FormDataImpl = FormDataImpl;
     this.#baseUrl = new URL(baseUrl);
     this.#fileUploadTimeoutMs = positiveTimeout(fileUploadTimeoutMs, 'fileUploadTimeoutMs');
+    this.#sendLimit = Number.isInteger(sendLimitPerMinute) && sendLimitPerMinute >= 1
+      ? sendLimitPerMinute
+      : DEFAULT_SEND_LIMIT_PER_MINUTE;
+    this.#logger = logger;
   }
 
   async getMe(options = {}) {
@@ -252,7 +302,7 @@ export class TelegramApi {
   }
 
   async sendMessage({ chatId, text, replyToMessageId, messageThreadId, replyMarkup, signal }) {
-    return this.#call('sendMessage', {
+    return this.#sendMessageCall('sendMessage', {
       chat_id: chatId,
       text,
       link_preview_options: { is_disabled: true },
@@ -280,7 +330,7 @@ export class TelegramApi {
     if (!Number.isSafeInteger(messageId)) {
       throw new TypeError('Telegram message id must be a safe integer');
     }
-    return this.#call('editMessageReplyMarkup', {
+    return this.#callUnbudgeted('editMessageReplyMarkup', {
       chat_id: chatId,
       message_id: messageId,
       ...(replyMarkup === undefined ? {} : { reply_markup: inputReplyMarkup(replyMarkup) }),
@@ -303,7 +353,7 @@ export class TelegramApi {
     messageThreadId,
     signal,
   }) {
-    return this.#call('sendRichMessage', {
+    return this.#sendMessageCall('sendRichMessage', {
       chat_id: chatId,
       rich_message: inputRichMessage(richMessage),
       ...(replyToMessageId ? {
@@ -317,7 +367,7 @@ export class TelegramApi {
     if (!Number.isSafeInteger(draftId) || draftId === 0) {
       throw new TypeError('Telegram rich message draft id must be a non-zero integer');
     }
-    return this.#call('sendRichMessageDraft', {
+    return this.#callUnbudgeted('sendRichMessageDraft', {
       chat_id: chatId,
       draft_id: draftId,
       rich_message: inputRichMessage(richMessage),
@@ -357,45 +407,165 @@ export class TelegramApi {
       || !Buffer.isBuffer(file.bytes)) {
       throw new TypeError(`A Telegram ${mediaLabel} is required`);
     }
-    const payload = new this.#FormDataImpl();
-    payload.append('chat_id', String(chatId));
-    payload.append(
-      fieldName,
-      new Blob([file.bytes], { type: file.mediaType ?? 'application/octet-stream' }),
-      file.fileName,
-    );
-    if (replyToMessageId) {
-      payload.append('reply_parameters', JSON.stringify({
-        message_id: replyToMessageId,
-        allow_sending_without_reply: true,
-      }));
-    }
-    if (messageThreadId) payload.append('message_thread_id', String(messageThreadId));
     if (signal?.aborted) throw abortReason(signal);
-    const uploadSignal = requestSignal(signal, this.#fileUploadTimeoutMs);
-    try {
-      return await this.#call(method, payload, {
-        signal: uploadSignal,
-        timeoutMs: this.#fileUploadTimeoutMs,
-        multipart: true,
-      });
-    } catch (error) {
-      if (signal?.aborted) throw abortReason(signal);
-      if (error?.deliveryOutcome === 'unknown') {
-        throw uncertainTelegramDelivery(error?.cause ?? error, mediaLabel);
+    // A multipart body can be consumed only once, so every attempt rebuilds it.
+    const dispatch = async () => {
+      // The upload timeout starts here, not when the caller asked for the send:
+      // a file queued behind the chat's send budget (or behind a 429 retry)
+      // would otherwise expire before its first request even opens, and the
+      // file would be reported as uncertain although nothing was sent.
+      const uploadSignal = requestSignal(signal, this.#fileUploadTimeoutMs);
+      const payload = new this.#FormDataImpl();
+      payload.append('chat_id', String(chatId));
+      payload.append(
+        fieldName,
+        new Blob([file.bytes], { type: file.mediaType ?? 'application/octet-stream' }),
+        file.fileName,
+      );
+      if (replyToMessageId) {
+        payload.append('reply_parameters', JSON.stringify({
+          message_id: replyToMessageId,
+          allow_sending_without_reply: true,
+        }));
       }
-      if (error?.code?.startsWith?.('telegram-')) {
-        throw telegramArtifactProviderError(error, mediaLabel);
+      if (messageThreadId) payload.append('message_thread_id', String(messageThreadId));
+      try {
+        return await this.#call(method, payload, {
+          signal: uploadSignal,
+          timeoutMs: this.#fileUploadTimeoutMs,
+          multipart: true,
+        });
+      } catch (error) {
+        if (signal?.aborted) throw abortReason(signal);
+        if (error?.deliveryOutcome === 'unknown') {
+          throw uncertainTelegramDelivery(error?.cause ?? error, mediaLabel);
+        }
+        if (error?.code?.startsWith?.('telegram-')) {
+          throw telegramArtifactProviderError(error, mediaLabel);
+        }
+        throw uncertainTelegramDelivery(error, mediaLabel);
       }
-      throw uncertainTelegramDelivery(error, mediaLabel);
+    };
+    return this.#sendMessageCall(method, { chat_id: chatId }, { signal }, dispatch);
+  }
+
+  /**
+   * Run a message-creating call inside the chat's send budget and retry it
+   * while Telegram answers 429.
+   *
+   * Only these calls are budgeted: Telegram charges its per-chat limit for new
+   * messages, while edits, drafts, typing actions, reactions and callback
+   * acknowledgements are free and must stay responsive during a burst.
+   */
+  async #sendMessageCall(method, payload, options, dispatch = null) {
+    const { signal } = options;
+    const chatId = String(payload.chat_id ?? '');
+    await this.#reserveSendSlot(method, chatId, signal);
+    let waitedMs = 0;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await (dispatch ?? (() => this.#call(method, payload, options)))();
+      } catch (error) {
+        const retryAfter = rateLimitRetryAfter(error);
+        if (retryAfter === null) throw error;
+        const delayMs = Math.ceil(retryAfter * 1000);
+        if (attempt >= MAX_SEND_ATTEMPTS || waitedMs + delayMs > MAX_RATE_LIMIT_WAIT_MS) {
+          const limited = preserveProviderMetadata(new Error(
+            `Telegram ${method} is rate limited in chat ${chatId}`,
+            { cause: error },
+          ), error);
+          limited.code = 'channel-rate-limit';
+          // The caller still has to tell the user when the chat frees up.
+          limited.retry_after = retryAfter;
+          limited.retryAfter = retryAfter;
+          throw limited;
+        }
+        waitedMs += delayMs;
+        this.#log(
+          `[dsh-im:telegram] chat ${chatId} ${method} rate limited by Telegram,`
+          + ` retrying in ${delayMs} ms (attempt ${attempt + 1} of ${MAX_SEND_ATTEMPTS})`,
+        );
+        await waitForDelay(delayMs, signal);
+      }
     }
+  }
+
+  /**
+   * Wait until this chat has a free slot in its budget.
+   *
+   * The budget belongs to the chat, not to the bot, so one busy group cannot
+   * starve the others. Waiting beats dropping: the caller's message is what the
+   * user asked for, and a slot always comes free within the window.
+   */
+  async #reserveSendSlot(method, chatId, signal) {
+    // Parallel callers to the same chat must queue up, otherwise they would all
+    // read the same free budget and overshoot the limit together.
+    const previous = this.#sendQueue.get(chatId) ?? Promise.resolve();
+    let release = () => {};
+    const gate = new Promise((resolve) => { release = resolve; });
+    const tail = previous.then(() => gate);
+    this.#sendQueue.set(chatId, tail);
+    await previous;
+    try {
+      await this.#waitForSendBudget(method, chatId, signal);
+    } finally {
+      release();
+      if (this.#sendQueue.get(chatId) === tail) this.#sendQueue.delete(chatId);
+    }
+  }
+
+  async #waitForSendBudget(method, chatId, signal) {
+    for (;;) {
+      if (signal?.aborted) throw abortReason(signal);
+      const now = Date.now();
+      const recent = (this.#sendTimestamps.get(chatId) ?? [])
+        .filter((at) => now - at < SEND_WINDOW_MS);
+      if (recent.length < this.#sendLimit) {
+        recent.push(now);
+        this.#sendTimestamps.set(chatId, recent);
+        return;
+      }
+      const delayMs = SEND_WINDOW_MS - (now - recent[0]);
+      this.#sendTimestamps.set(chatId, recent);
+      this.#log(
+        `[dsh-im:telegram] chat ${chatId} ${method} waits ${delayMs} ms`
+        + ` for the next send slot (limit ${this.#sendLimit} per minute)`,
+      );
+      await waitForDelay(delayMs, signal);
+    }
+  }
+
+  /**
+   * Call a method that Telegram does not charge against the send budget.
+   *
+   * A 429 here is not retried: the frame it carries is already superseded by the
+   * next one, and waiting would stall the stream. It resolves to `undefined`
+   * instead of rejecting, because a rejected edit has nobody waiting for it and
+   * would surface as an unhandled rejection; a caller that needs the edit to be
+   * on screen checks for `undefined` and falls back.
+   */
+  async #callUnbudgeted(method, payload, options = {}) {
+    try {
+      return await this.#call(method, payload, options);
+    } catch (error) {
+      if (rateLimitRetryAfter(error) === null) throw error;
+      this.#log(
+        `[dsh-im:telegram] chat ${String(payload.chat_id ?? '')} ${method}`
+        + ' rate limited; skipping this update',
+      );
+      return undefined;
+    }
+  }
+
+  #log(message) {
+    this.#logger?.warn?.(message);
   }
 
   async editMessageText({ chatId, messageId, text, richMessage, signal }) {
     if ((text === undefined) === (richMessage === undefined)) {
       throw new TypeError('Telegram message edit requires exactly one of text or richMessage');
     }
-    return this.#call('editMessageText', {
+    return this.#callUnbudgeted('editMessageText', {
       chat_id: chatId,
       message_id: messageId,
       ...(text === undefined ? { rich_message: inputRichMessage(richMessage) } : {
