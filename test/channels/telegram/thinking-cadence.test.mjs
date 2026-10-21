@@ -369,3 +369,132 @@ test('the settings card renders the numbering switch and the interval select', a
   assert.equal((markup.match(/type="checkbox"/g) ?? []).length, 2);
   assert.equal(calls.length, 0, 'rendering must not save anything');
 });
+
+test('the placeholder progress is numbered, so an unchanging tool name still moves', async () => {
+  const calls = [];
+  const client = new TelegramBotClient({
+    api: {
+      sendMessage: (payload) => {
+        calls.push({ method: 'sendMessage', payload });
+        return { message_id: 4101 };
+      },
+      editMessageText: (payload) => {
+        calls.push({ method: 'editMessageText', payload });
+        return { message_id: 4101 };
+      },
+      deleteMessage: (payload) => {
+        calls.push({ method: 'deleteMessage', payload });
+        return true;
+      },
+      sendRichMessage: (payload) => {
+        calls.push({ method: 'sendRichMessage', payload });
+        return { message_id: 4102 };
+      },
+    },
+    thinkingNumbering: true,
+  });
+  const stream = await client.openDeliveryStream({ chatId: 42, chatType: 'private', replyToMessageId: 44 });
+  await stream.update({ kind: 'text', text: 'Using bash', format: 'plain' });
+  await stream.update({ kind: 'text', text: 'Using bash', format: 'plain' });
+  await stream.finish({ kind: 'text', text: '## done', format: 'markdown' });
+
+  assert.deepEqual(
+    calls.filter(({ method }) => method === 'editMessageText').map(({ payload }) => payload.text),
+    ['1. Using bash', '2. Using bash'],
+    'identical progress lines differ by their frame number',
+  );
+  // The placeholder carries progress only: the merged final-answer delivery
+  // deletes it and sends the answer as its own message, so the numbering stops
+  // with the last frame instead of rewriting the placeholder into the answer.
+  assert.deepEqual(calls.map(({ method }) => method), [
+    'sendMessage',
+    'editMessageText',
+    'editMessageText',
+    'deleteMessage',
+    'sendRichMessage',
+  ]);
+  assert.deepEqual(calls.at(-1).payload.richMessage, { markdown: '## done' });
+});
+
+// --- placeholder pacing vs. finalization ----------------------------------
+
+/** Placeholder API whose progress edits are recorded in the order they land,
+ *  each waiting on the gate for its own frame. */
+function pacedPlaceholder(gates = []) {
+  const events = [];
+  let placeholderId = 7100;
+  const api = {
+    sendMessage: async () => {
+      placeholderId += 1;
+      return { message_id: placeholderId };
+    },
+    editMessageText: async (payload) => {
+      const gate = gates.shift();
+      if (gate) await gate;
+      events.push(`edit ${payload.text}`);
+      return { message_id: placeholderId };
+    },
+    deleteMessage: async () => {
+      events.push('delete placeholder');
+      return true;
+    },
+    sendRichMessage: async (payload) => {
+      events.push(`answer ${payload.richMessage.markdown}`);
+      return { message_id: 7200 };
+    },
+  };
+  return { events, api };
+}
+
+test('a progress frame released by the window timer never lands after the final answer', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  // The frame the timer releases is the slow one: finalization must wait for it
+  // rather than deleting the placeholder underneath its in-flight edit.
+  let releaseSlowEdit;
+  const slowEdit = new Promise((resolve) => { releaseSlowEdit = resolve; });
+  const { events, api } = pacedPlaceholder([undefined, slowEdit]);
+  const client = new TelegramBotClient({
+    api,
+    thinkingNumbering: true,
+    thinkingIntervalSeconds: 1,
+  });
+  const stream = await client.openDeliveryStream({ chatId: 42, chatType: 'private' });
+
+  await stream.update({ kind: 'text', text: 'one', format: 'plain' });
+  await stream.update({ kind: 'text', text: 'two', format: 'plain' });
+  assert.deepEqual(events, ['edit 1. one'], 'the second frame waits for its window');
+
+  await advance(t, 1_000);
+  const finished = stream.finish({ kind: 'text', text: '## answer', format: 'markdown' });
+  await flush();
+  assert.deepEqual(events, ['edit 1. one'], 'finalization waits for the in-flight timer edit');
+
+  releaseSlowEdit();
+  await finished;
+
+  assert.deepEqual(events, [
+    'edit 1. one',
+    'edit 2. two',
+    'delete placeholder',
+    'answer ## answer',
+  ], 'the answer goes out only after the timer edit it was queued behind');
+});
+
+test('cancel() drops the pending window timer instead of sending the held frame later', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { events, api } = pacedPlaceholder();
+  const client = new TelegramBotClient({
+    api,
+    thinkingNumbering: true,
+    thinkingIntervalSeconds: 2,
+  });
+  const stream = await client.openDeliveryStream({ chatId: 42, chatType: 'private' });
+
+  await stream.update({ kind: 'text', text: 'one', format: 'plain' });
+  await stream.update({ kind: 'text', text: 'two', format: 'plain' });
+  assert.deepEqual(events, ['edit 1. one']);
+
+  stream.cancel();
+  await advance(t, 30_000);
+  assert.deepEqual(events, ['edit 1. one'], 'a cancelled turn must not rewrite the placeholder later');
+});
