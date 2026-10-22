@@ -8,7 +8,7 @@ import { FeishuGroupSettingsPage } from './channels/feishu/group-settings.js';
 import { FeishuVoiceSettingsPage } from './channels/feishu/voice-settings.js';
 import { FeishuSlashPanelSettingsPage } from './channels/feishu/slash-panel-settings.js';
 import { TelegramGroupTriggersSettings } from './channels/telegram/group-triggers-settings.js';
-import { h, imLocale, localizeText } from './i18n.js';
+import { h, imLocale, localizeTemplate, localizeText } from './i18n.js';
 
 export const DELIVERY_RPC_CHANNEL = '/dsh-im-delivery';
 
@@ -779,7 +779,7 @@ export function DeliveryTargetSettingsPage({
 
   return h('section', {
     className: 'dim-deliveryPage',
-    'aria-label': `${account.botName || definition.label}机器人设置`,
+    'aria-label': localizeTemplate('{name}机器人设置', { name: account.botName || definition.label }),
   },
   h('header', { className: 'dim-deliveryHeader' },
     h(DeliveryButton, { className: 'dim-deliveryBack', onClick: onBack }, '← 返回机器人列表')),

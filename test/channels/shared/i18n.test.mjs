@@ -14,6 +14,7 @@ import {
 } from '../../../src/channels/shared/i18n.mjs';
 import { EN } from '../../../src/channels/shared/i18n-en.mjs';
 import { RU } from '../../../src/channels/shared/i18n-ru.mjs';
+import { parseSessionListArgument } from '../../../src/channels/shared/workspace-command.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcChannelsDir = join(here, '..', '..', '..', 'src', 'channels');
@@ -220,6 +221,19 @@ test('a Russian key missing from the dictionary falls back to English, never to 
   assert.equal(translateImHostText(key, 'ru'), RU[key]);
   assert.equal(translateImHostText(key, 'zh'), key);
   assert.equal(translateImHostText('未收录的中文', 'zh'), '未收录的中文');
+});
+
+test('invalid session list limits return translated usage including the conversation workspace rule', () => {
+  for (const [language, prefix, workspaceRule] of [
+    ['en', 'Usage:', 'Without a workspace argument'],
+    ['ru', 'Использование:', 'Без аргумента рабочей области'],
+  ]) {
+    setImHostLanguage(language);
+    const { error } = parseSessionListArgument('--limit abc');
+    assert.ok(error.startsWith(prefix));
+    assert.ok(error.includes(workspaceRule));
+    assert.doesNotMatch(error, /[\u4e00-\u9fff]/u);
+  }
 });
 
 test('every English dictionary entry is a non-empty translation of a Chinese key', () => {

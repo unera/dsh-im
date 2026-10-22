@@ -92,9 +92,13 @@ test('a Russian gap falls back to English before the Chinese key', () => {
 test('a key neither dictionary knows stays the Chinese literal', () => {
   setImTranslator(chainTranslator({ ru, en }));
   assert.equal(localizeText('这个文案谁都没有翻译'), '这个文案谁都没有翻译');
-  // The dynamic English heuristics are an English-only last resort: a Russian
-  // reader gets the identity text instead of English guessed from the Chinese.
-  assert.equal(localizeText('最近一条消息处理失败：网络中断'), '最近一条消息处理失败：网络中断');
+  // A message composed outside the UI is in neither dictionary either, but the
+  // dynamic table recognises its Chinese shape and renders it in Russian instead of
+  // leaving it Chinese — the string a Russian reader was shown before it existed.
+  assert.equal(
+    localizeText('一次最多只能处理 9 张图片。'),
+    'В одном сообщении может быть не больше 9 изображений.',
+  );
 });
 
 test('Chinese and English readers keep the text they have today', () => {
@@ -108,7 +112,7 @@ test('Chinese and English readers keep the text they have today', () => {
   assert.equal(localizeText('侧边栏入口'), 'Sidebar entry');
   assert.equal(localizeText('保存'), 'Save');
   // English still reaches the dynamic heuristics for a key it does not carry.
-  assert.equal(localizeText('最近一条消息处理失败：网络中断'), 'Latest message failed: 网络中断');
+  assert.equal(localizeText('一次最多只能处理 9 张图片。'), 'A message can contain at most 9 images.');
 });
 
 test('installing the language pack registers the definition and the dictionary', () => {

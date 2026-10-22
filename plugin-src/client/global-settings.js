@@ -7,7 +7,7 @@ import {
   INBOUND_TTL_MAX_HOURS,
   normalizeInboundTtlHours,
 } from '../../src/channels/shared/inbound-ttl.mjs';
-import { h } from './i18n.js';
+import { h, localizeTemplate } from './i18n.js';
 import { DEFAULT_IMAGE_INPUT_SETTINGS, normalizeImageInputSettings } from '../../src/channels/shared/image-input-policy.mjs';
 
 export const GLOBAL_SETTINGS_RPC_CHANNEL = '/dsh-im-settings';
@@ -277,7 +277,10 @@ function AttachmentSettingsPanel({ rpcCall }) {
   const inlineStatus = phase === 'loading'
     ? { role: 'status', message: '正在读取通用设置…' }
     : ttlError
-      ? { role: 'alert', message: `请输入 -1、0 或 1~${INBOUND_TTL_MAX_HOURS} 之间的整数。` }
+      ? {
+        role: 'alert',
+        message: localizeTemplate('请输入 -1、0 或 1~{max} 之间的整数。', { max: INBOUND_TTL_MAX_HOURS }),
+      }
       : saveError
         ? { role: 'alert', message: saveError }
         : phase === 'error' && loadError

@@ -9,6 +9,7 @@ import React from 'react';
 import { normalizeThinkingIntervalSeconds } from '../../../src/channels/shared/thinking-cadence.mjs';
 import { TelegramConfigStore } from '../../../src/channels/telegram/config-store.mjs';
 import { TelegramController } from '../../../src/channels/telegram/telegram-controller.mjs';
+import { TelegramApi } from '../../../src/channels/telegram/telegram-api.mjs';
 import { TelegramBotClient } from '../../../src/channels/telegram/telegram-runtime.mjs';
 import { ThinkingTracesSettings } from '../../../plugin-src/client/channels/telegram/thinking-traces.js';
 import { createTokenBotRpcHandler, TOKEN_BOT_ENDPOINTS } from '../../../plugin-src/host/channels/shared/rpc.mjs';
@@ -497,4 +498,112 @@ test('cancel() drops the pending window timer instead of sending the held frame 
   stream.cancel();
   await advance(t, 30_000);
   assert.deepEqual(events, ['edit 1. one'], 'a cancelled turn must not rewrite the placeholder later');
+});
+
+test('cadence and send-limit RPC saves preserve each other across reload and runtime restart', async (t) => {
+  const fixture = await controllerFixture(t);
+  const handler = createTokenBotRpcHandler(fixture.controller, { channel: 'Telegram' });
+  const { normalizeSnapshot } = await import('../../../plugin-src/client/channels/telegram/api.js');
+  const save = async (endpoint, fields) => {
+    const response = await handler(endpoint, { botId: fixture.botId, ...fields });
+    assert.equal(response.ok, true);
+    return normalizeSnapshot(response.value).bots[0];
+  };
+  await save(TOKEN_BOT_ENDPOINTS.setSendLimit, { sendLimitPerMinute: 12 });
+  const cadence = await save(TOKEN_BOT_ENDPOINTS.setThinkingCadence, {
+    thinkingNumbering: true, thinkingIntervalSeconds: 5,
+  });
+  assert.equal(cadence.sendLimitPerMinute, 12);
+  const limit = await save(TOKEN_BOT_ENDPOINTS.setSendLimit, { sendLimitPerMinute: 8 });
+  assert.equal(limit.thinkingNumbering, true);
+  assert.equal(limit.thinkingIntervalSeconds, 5);
+  assert.equal(limit.sendLimitPerMinute, 8);
+  const reloaded = await new TelegramConfigStore(fixture.configPath).load();
+  for (const config of [reloaded.get(fixture.botId), fixture.runtimeRecords.at(-1).config]) {
+    assert.equal(config.thinkingNumbering, true);
+    assert.equal(config.thinkingIntervalSeconds, 5);
+    assert.equal(config.sendLimitPerMinute, 8);
+  }
+});
+
+test('the combined settings card saves cadence and the send limit through their own endpoints', async (t) => {
+  const { act, create } = await import('react-test-renderer');
+  const { TELEGRAM_ENDPOINTS } = await import('../../../plugin-src/client/channels/telegram/api.js');
+  const calls = [];
+  const reloads = [];
+  let renderer;
+  await act(async () => {
+    renderer = create(React.createElement(ThinkingTracesSettings, {
+      account: {
+        botId: 'telegram_test', thinkingTraces: true,
+        thinkingNumbering: true, thinkingIntervalSeconds: 5, sendLimitPerMinute: 15,
+      },
+      endpoints: TELEGRAM_ENDPOINTS,
+      rpcCall: async (endpoint, payload) => {
+        calls.push({ endpoint, payload });
+        return { ok: true, value: {} };
+      },
+      onChanged: async (options) => { reloads.push(options); },
+    }));
+  });
+  t.after(() => act(() => renderer.unmount()));
+  await act(async () => {
+    renderer.root.findByType('select').props.onChange({ target: { value: '7' } });
+  });
+  await act(async () => {
+    renderer.root.findAllByProps({ type: 'checkbox' })[1].props.onChange({ target: { checked: false } });
+  });
+  await act(async () => {
+    renderer.root.findByProps({ type: 'number' }).props.onChange({ target: { value: '12' } });
+  });
+  await act(async () => { renderer.root.findByProps({ type: 'number' }).props.onBlur(); });
+  assert.deepEqual(calls, [
+    { endpoint: 'bot.thinking-cadence.set', payload: {
+      botId: 'telegram_test', thinkingNumbering: true, thinkingIntervalSeconds: 7,
+    } },
+    { endpoint: 'bot.thinking-cadence.set', payload: {
+      botId: 'telegram_test', thinkingNumbering: false, thinkingIntervalSeconds: 7,
+    } },
+    { endpoint: 'bot.send-limit.set', payload: { botId: 'telegram_test', sendLimitPerMinute: 12 } },
+  ]);
+  assert.deepEqual(reloads, [{ silent: true }, { silent: true }, { silent: true }]);
+});
+
+test('paced traces waiting for the per-chat budget still settle before the final answer', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const sent = [];
+  const api = new TelegramApi({
+    token: TOKEN, sendLimitPerMinute: 1, logger: quietLogger,
+    fetchImpl: async (_url, options) => {
+      sent.push(JSON.parse(options.body).text);
+      return new Response(JSON.stringify({ ok: true, result: { message_id: sent.length } }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  const stream = new TelegramBotClient({
+    api, logger: quietLogger, thinkingNumbering: true, thinkingIntervalSeconds: 3,
+  }).openThinkingStream({ chatId: 42 });
+  await stream.sendThinking('first');
+  await advance(t, 1_000);
+  await stream.sendThinking('superseded');
+  await advance(t, 1_000);
+  await stream.sendThinking('latest');
+  await advance(t, 1_000);
+  let finished = false;
+  const finishing = stream.finish('answer').then((receipt) => {
+    finished = true;
+    return receipt;
+  });
+  await flush();
+  assert.deepEqual(sent, ['1 💭 first']);
+  assert.equal(finished, false);
+  await advance(t, 57_000);
+  assert.deepEqual(sent, ['1 💭 first', '3 💭 latest']);
+  assert.equal(finished, false, 'the answer also respects the per-chat budget');
+  await advance(t, 60_000);
+  const receipt = await finishing;
+  assert.deepEqual(sent, ['1 💭 first', '3 💭 latest', 'answer']);
+  assert.equal(receipt.deliveryOutcome, 'sent');
+  assert.deepEqual(receipt.providerMessageIds, ['1', '2', '3']);
 });

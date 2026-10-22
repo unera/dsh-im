@@ -1,17 +1,28 @@
 /**
- * 会话行为设置块：思考过程留痕、帧编号与帧节奏，以及消息发送上限（Telegram 专属）。
+ * 会话行为设置块：思考过程留痕、帧编号、帧节奏与消息发送上限（Telegram 专属）。
  *
  * 开启留痕后，机器人把 agent 的推理与工具调用作为独立的 💭/🔧 消息实时发出来，
- * 最终答案单独成条；关闭则回到「占位符被最终答案覆盖」的原有单消息行为。
+ * 最终答案单独成条；关闭留痕后使用常规占位符进度，完成时删除占位符并发送答案。
  * 一轮里可能产生几十帧，所以另外两个设置决定这串消息的样子：编号让顺序可见，
  * 节奏把突发合并成最新一帧，而不是排一队过期的消息。
  * 发送上限对应 Telegram 对每个聊天的消息配额：配额用尽时机器人等待下一个空位，
  * 而不是丢弃消息。
  */
-import { DEFAULT_SEND_LIMIT_PER_MINUTE } from '../../../../src/channels/shared/send-limit.mjs';
 import { normalizeThinkingIntervalSeconds } from '../../../../src/channels/shared/thinking-cadence.mjs';
+import { DEFAULT_SEND_LIMIT_PER_MINUTE } from '../../../../src/channels/shared/send-limit.mjs';
 import { h } from '../../i18n.js';
 import * as React from 'react';
+
+/** 0 表示不限制；其余是常见的步长，最大一分钟。 */
+export const THINKING_INTERVAL_OPTIONS = Object.freeze([
+  0, 1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60,
+]);
+
+/** 配置里可能存着列表外的值（旧配置或手工编辑），补一个选项而不是静默改成 0。 */
+function intervalValues(saved) {
+  if (THINKING_INTERVAL_OPTIONS.includes(saved)) return THINKING_INTERVAL_OPTIONS;
+  return [...THINKING_INTERVAL_OPTIONS, saved].sort((left, right) => left - right);
+}
 
 function SendLimitField({ account, busy, saving, onCommit }) {
   const saved = Number.isInteger(account.sendLimitPerMinute)
@@ -51,36 +62,10 @@ function SendLimitField({ account, busy, saving, onCommit }) {
     }));
 }
 
-/** 0 表示不限制；其余是常见的步长，最大一分钟。 */
-export const THINKING_INTERVAL_OPTIONS = Object.freeze([
-  0, 1, 2, 3, 5, 7, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60,
-]);
-
-/** 配置里可能存着列表外的值（旧配置或手工编辑），补一个选项而不是静默改成 0。 */
-function intervalValues(saved) {
-  if (THINKING_INTERVAL_OPTIONS.includes(saved)) return THINKING_INTERVAL_OPTIONS;
-  return [...THINKING_INTERVAL_OPTIONS, saved].sort((left, right) => left - right);
-}
-
 export function ThinkingTracesSettings({
   account, busy, onSave, rpcCall, endpoints, onChanged,
 }) {
   const checked = account.thinkingTraces !== false;
-  const [saving, setSaving] = React.useState(false);
-  const sendLimitEndpoint = endpoints?.setSendLimit;
-  const commitSendLimit = async (sendLimitPerMinute) => {
-    if (typeof rpcCall !== 'function' || !sendLimitEndpoint) return;
-    setSaving(true);
-    try {
-      const response = await rpcCall(sendLimitEndpoint, { botId: account.botId, sendLimitPerMinute });
-      if (response && response.ok === false) throw new Error(response.error?.message ?? '请求失败');
-      await onChanged?.({ silent: true });
-    } catch {
-      // The stored value stays authoritative; the next reload shows it again.
-    } finally {
-      setSaving(false);
-    }
-  };
   const storedNumbering = account.thinkingNumbering === true;
   const storedInterval = normalizeThinkingIntervalSeconds(account.thinkingIntervalSeconds);
   // 两个新控件共用一个 RPC，所以各自提交时都要带上对方的当前值。
@@ -92,19 +77,34 @@ export function ThinkingTracesSettings({
   React.useEffect(() => {
     setDraft({ thinkingNumbering: storedNumbering, thinkingIntervalSeconds: storedInterval });
   }, [storedNumbering, storedInterval]);
-  const cadenceEndpoint = endpoints?.setThinkingCadence;
+  const [saving, setSaving] = React.useState(false);
+  const endpoint = endpoints?.setThinkingCadence;
   const commit = async (patch) => {
-    if (typeof rpcCall !== 'function' || !cadenceEndpoint) return;
+    if (typeof rpcCall !== 'function' || !endpoint) return;
     const next = { ...draft, ...patch };
     setDraft(next);
     setSaving(true);
     try {
-      const response = await rpcCall(cadenceEndpoint, { botId: account.botId, ...next });
+      const response = await rpcCall(endpoint, { botId: account.botId, ...next });
       if (response && response.ok === false) throw new Error(response.error?.message ?? '请求失败');
       await onChanged?.({ silent: true });
     } catch {
       // 服务端存的值仍然作准：界面回到它，免得显示一个没保存的节奏。
       setDraft({ thinkingNumbering: storedNumbering, thinkingIntervalSeconds: storedInterval });
+    } finally {
+      setSaving(false);
+    }
+  };
+  const sendLimitEndpoint = endpoints?.setSendLimit;
+  const commitSendLimit = async (sendLimitPerMinute) => {
+    if (typeof rpcCall !== 'function' || !sendLimitEndpoint) return;
+    setSaving(true);
+    try {
+      const response = await rpcCall(sendLimitEndpoint, { botId: account.botId, sendLimitPerMinute });
+      if (response && response.ok === false) throw new Error(response.error?.message ?? '请求失败');
+      await onChanged?.({ silent: true });
+    } catch {
+      // The stored value stays authoritative; the next reload shows it again.
     } finally {
       setSaving(false);
     }

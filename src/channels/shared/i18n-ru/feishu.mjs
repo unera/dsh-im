@@ -1,5 +1,6 @@
 // Russian translations (feishu area). Keys are exact Chinese literals passed to t().
 export default {
+  '选择 {number}': 'Выбрать {number}',
   '这里需要填写用户的 Open ID，不能填写机器人自己的 Open ID。':
     'Здесь нужен Open ID пользователя, а не Open ID самого бота.',
   '已结束本轮提问，将在当前会话中继续处理图片。':

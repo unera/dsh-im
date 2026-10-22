@@ -81,12 +81,6 @@ export class TelegramController extends TokenBotController {
     }));
   }
 
-  /** Persist the per-chat send limit; the runtime restarts with the new value. */
-  async setSendLimitPerMinute(botId, value) {
-    const sendLimitPerMinute = normalizeSendLimitPerMinute(value);
-    return this.updateBotConfig(botId, (config) => ({ ...config, sendLimitPerMinute }));
-  }
-
   /**
    * Persist trace numbering and pacing; the runtime restarts with the new
    * values, so the next turn already follows them.
@@ -99,6 +93,12 @@ export class TelegramController extends TokenBotController {
       thinkingNumbering: numbering,
       thinkingIntervalSeconds: interval,
     }));
+  }
+
+  /** Persist the per-chat send limit; the runtime restarts with the new value. */
+  async setSendLimitPerMinute(botId, value) {
+    const sendLimitPerMinute = normalizeSendLimitPerMinute(value);
+    return this.updateBotConfig(botId, (config) => ({ ...config, sendLimitPerMinute }));
   }
 
   /** Channels the bot has actually received messages from. */
