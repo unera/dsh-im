@@ -21,6 +21,8 @@ import {
 } from './telegram-rich-message.mjs';
 import {
   normalizeSendLimitPerMinute,
+  normalizeThinkingIntervalSeconds,
+  normalizeThinkingNumbering,
   TELEGRAM_ACCESS_MODES,
 } from './config-store.mjs';
 
@@ -465,6 +467,7 @@ class TelegramDeliveryStream {
   #update;
   #finish;
   #fail;
+  #onCancel;
   #logger;
   #providerMessageIds;
   #closed = false;
@@ -472,6 +475,7 @@ class TelegramDeliveryStream {
   #lastBlock = null;
   #keepalive = false;
   #previewAnswer = true;
+  #uniqueFrames = false;
   #previewStopped = false;
   #chain = Promise.resolve();
 
@@ -479,15 +483,18 @@ class TelegramDeliveryStream {
     update,
     finish,
     fail,
+    onCancel = null,
     providerMessageIds = [],
     presentation,
     logger,
     keepalive = false,
     previewAnswer = true,
+    uniqueFrames = false,
   }) {
     this.#update = update;
     this.#finish = finish;
     this.#fail = fail;
+    this.#onCancel = onCancel;
     this.#providerMessageIds = providerMessageIds;
     this.presentation = presentation;
     this.#logger = logger;
@@ -499,6 +506,10 @@ class TelegramDeliveryStream {
     // answer text into it would show the same reply twice: first as a run of
     // edits, then again as the delivered message.
     this.#previewAnswer = previewAnswer !== false;
+    // A numbered carrier rewrites one line with a different prefix, so the
+    // identical-text shortcut would swallow every frame after the first and the
+    // reader would still watch a frozen placeholder.
+    this.#uniqueFrames = uniqueFrames === true;
   }
 
   /** Whether answer text may be shown in the carrier before it is delivered. */
@@ -523,6 +534,14 @@ class TelegramDeliveryStream {
     return run;
   }
 
+  /** Queue a write that originates outside update(), such as a paced frame
+   *  released by a timer. It runs on the same chain as finish()/fail(), so a
+   *  slow edit is awaited before finalization instead of landing after the
+   *  answer. */
+  enqueue(task) {
+    return this.#enqueue(task);
+  }
+
   // Live drafts can block the user's composer. Drain any pending draft before
   // the regular question/approval message clears it, and keep this turn's
   // preview stopped so late progress cannot block the answer again.
@@ -537,7 +556,7 @@ class TelegramDeliveryStream {
       const block = createTextDeliveryBlock(value);
       this.#lastBlock = block;
       const key = `${block.format}:${block.text}`;
-      if (key === this.#lastUpdate) return undefined;
+      if (!this.#uniqueFrames && key === this.#lastUpdate) return undefined;
       this.#lastUpdate = key;
       try {
         return await this.#update(block);
@@ -586,6 +605,9 @@ class TelegramDeliveryStream {
 
   cancel() {
     this.#closed = true;
+    // Carrier-specific teardown (a paced progress window still holding a frame
+    // and its timer) lives with whoever opened the stream.
+    this.#onCancel?.();
   }
 }
 
@@ -652,11 +674,22 @@ export class TelegramBotClient {
   #api;
   #signal;
   #logger;
+  #thinkingNumbering;
+  #thinkingIntervalMs;
 
-  constructor({ api, signal, logger = console }) {
+  constructor({
+    api,
+    signal,
+    logger = console,
+    thinkingNumbering = false,
+    thinkingIntervalSeconds = 0,
+  }) {
     this.#api = api;
     this.#signal = signal;
     this.#logger = logger;
+    // Read once: the runtime restarts whenever the owner changes either value.
+    this.#thinkingNumbering = normalizeThinkingNumbering(thinkingNumbering);
+    this.#thinkingIntervalMs = normalizeThinkingIntervalSeconds(thinkingIntervalSeconds) * 1_000;
   }
 
   async sendText(target, text) {
@@ -897,42 +930,116 @@ export class TelegramBotClient {
     if (!Number.isSafeInteger(messageId)) {
       throw new Error('Telegram did not return a placeholder message id');
     }
-    return new TelegramDeliveryStream({
-      update: async (block) => {
-        if (block.format === 'plain') {
-          await this.#api.editMessageText({
-            chatId: target.chatId,
-            messageId,
-            text: block.text,
-            signal: this.#signal,
-          });
-          return deliveryResult('text-fallback', [String(messageId)]);
-        }
+    const editBlock = async (block) => {
+      if (block.format === 'plain') {
         await this.#api.editMessageText({
           chatId: target.chatId,
           messageId,
-          richMessage: { markdown: toTelegramRichMarkdown(block.text) },
+          text: block.text,
           signal: this.#signal,
         });
-        return deliveryResult('telegram-rich-draft', [String(messageId)]);
-      },
+        return deliveryResult('text-fallback', [String(messageId)]);
+      }
+      await this.#api.editMessageText({
+        chatId: target.chatId,
+        messageId,
+        richMessage: { markdown: toTelegramRichMarkdown(block.text) },
+        signal: this.#signal,
+      });
+      return deliveryResult('telegram-rich-draft', [String(messageId)]);
+    };
+    // One message rewritten in place means a row of identical "Using bash"
+    // edits looks frozen. Numbering counts every progress frame of the turn and
+    // prefixes it, so the line keeps moving; pacing keeps the edits themselves
+    // rare and still lands the newest held frame when its window closes.
+    const numbering = this.#thinkingNumbering;
+    const intervalMs = this.#thinkingIntervalMs;
+    let sequence = 0;
+    let held = null;
+    let windowTimer = null;
+    let windowEndsAt = 0;
+    let closed = false;
+    let stream = null;
+    const clearWindowTimer = () => {
+      if (windowTimer === null) return;
+      clearTimeout(windowTimer);
+      windowTimer = null;
+    };
+    const sendHeld = async () => {
+      const frame = held;
+      held = null;
+      if (!frame || closed) return;
+      try {
+        await editBlock(frame);
+      } catch (error) {
+        this.#logger?.warn?.('[dsh-im:telegram] placeholder frame failed:', error);
+      }
+    };
+    const armWindowTimer = () => {
+      if (windowTimer !== null) return;
+      windowTimer = setTimeout(() => {
+        windowTimer = null;
+        windowEndsAt = Date.now() + intervalMs;
+        // The released frame enters the stream's queue instead of editing on its
+        // own: an unqueued edit could still be in flight while finish() deletes
+        // the placeholder and sends the answer, so the stale frame would land
+        // after the reply.
+        void stream.enqueue(() => sendHeld());
+      }, Math.max(0, windowEndsAt - Date.now()));
+    };
+    // Finalization takes whatever the window still holds: the last frame goes
+    // out before the answer, and nothing may start after it.
+    const drainHeld = async () => {
+      clearWindowTimer();
+      await sendHeld();
+      closed = true;
+    };
+    const pushProgress = async (block) => {
+      if (closed) return undefined;
+      sequence += 1;
+      const framed = numbering && block.text
+        ? { ...block, text: `${sequence}. ${block.text}` }
+        : block;
+      if (intervalMs <= 0) return editBlock(framed);
+      if (Date.now() >= windowEndsAt) {
+        windowEndsAt = Date.now() + intervalMs;
+        held = null;
+        return editBlock(framed);
+      }
+      held = framed;
+      armWindowTimer();
+      return undefined;
+    };
+    stream = new TelegramDeliveryStream({
+      update: (block) => pushProgress(block),
       // The placeholder carries progress only: its last frame would be a silent
       // edit, so the answer goes out as its own message and Telegram notifies
       // the reader that the turn is over.
       finish: async (block) => {
+        await drainHeld();
         await this.#deletePlaceholder(target, messageId);
         return this.#sendRich(target, block);
       },
       fail: async (block) => {
+        await drainHeld();
         await this.#deletePlaceholder(target, messageId);
         return this.#sendPlain(target, block.text);
+      },
+      // A cancelled turn must not wake up later and rewrite the placeholder the
+      // reader has already stopped watching.
+      onCancel: () => {
+        closed = true;
+        clearWindowTimer();
+        held = null;
       },
       presentation: 'telegram-regular',
       // Answer text is not mirrored into the placeholder: it is deleted before
       // the real message goes out, so a preview would duplicate the reply.
       previewAnswer: false,
+      uniqueFrames: numbering,
       logger: this.#logger,
     });
+    return stream;
   }
 
   async openStream(target) {
@@ -976,6 +1083,14 @@ export class TelegramBotClient {
     const providerMessageIds = [];
     let firstMessageId = null;
     let closed = false;
+    // Numbering counts every frame of the turn, paced-away ones included, so the
+    // gaps in the visible numbers tell how much was held back.
+    const numbering = this.#thinkingNumbering;
+    const intervalMs = this.#thinkingIntervalMs;
+    let sequence = 0;
+    let held = null;
+    let windowTimer = null;
+    let windowEndsAt = 0;
     const logger = this.#logger;
     const warnFailure = (label, error) => {
       logger?.warn?.(`[dsh-im:telegram] thinking stream ${label} failed:`, error);
@@ -994,6 +1109,66 @@ export class TelegramBotClient {
         providerMessageIds.push(String(id));
       }
     };
+    const deliver = async (label, text) => {
+      try {
+        await sendLine(text);
+      } catch (error) {
+        warnFailure(label, error);
+      }
+    };
+    // Trace sends run in the background: the window timer starts one and nobody
+    // awaits it, so finish() would otherwise find an empty buffer and let the
+    // answer overtake a trace request that is still on the wire.
+    const inFlight = new Set();
+    const track = (label, text) => {
+      const send = deliver(label, text).finally(() => { inFlight.delete(send); });
+      inFlight.add(send);
+      return send;
+    };
+    // Settling one send can release another (a held frame), so drain in a loop.
+    const settleInFlight = async () => {
+      while (inFlight.size > 0) await Promise.all([...inFlight]);
+    };
+    const clearWindowTimer = () => {
+      if (windowTimer === null) return;
+      clearTimeout(windowTimer);
+      windowTimer = null;
+    };
+    const sendHeld = () => {
+      const frame = held;
+      held = null;
+      return frame ? track(frame.label, frame.text) : Promise.resolve();
+    };
+    const armWindowTimer = () => {
+      if (windowTimer !== null) return;
+      windowTimer = setTimeout(() => {
+        windowTimer = null;
+        windowEndsAt = Date.now() + intervalMs;
+        // The window keeps only the newest frame, so a burst collapses to one
+        // message instead of a queue of frames nobody wants to read.
+        void sendHeld();
+      }, Math.max(0, windowEndsAt - Date.now()));
+    };
+    /** One frame: immediate outside a window, otherwise the newest held one. */
+    const emit = (label, text) => {
+      if (closed) return Promise.resolve();
+      sequence += 1;
+      const frame = { label, text: numbering ? `${sequence} ${text}` : text };
+      if (intervalMs <= 0) return track(frame.label, frame.text);
+      if (Date.now() >= windowEndsAt) {
+        // The deadline has passed but its timer may not have run yet, and that
+        // callback would deliver the frame this newer one supersedes. Drop both
+        // the held frame and its timer before letting the new frame through.
+        clearWindowTimer();
+        held = null;
+        windowEndsAt = Date.now() + intervalMs;
+        return track(frame.label, frame.text);
+      }
+      // Inside the window: replace whatever waited, never append.
+      held = frame;
+      armWindowTimer();
+      return Promise.resolve();
+    };
     return {
       get messageId() {
         return firstMessageId;
@@ -1008,27 +1183,21 @@ export class TelegramBotClient {
       update: async () => {},
       refresh: async () => {},
       sendLine,
-      sendToolTrace: (name, argumentsValue) => (async () => {
-        if (closed) return;
-        try {
-          await sendLine(formatToolTrace(name, argumentsValue));
-        } catch (error) {
-          warnFailure('tool trace', error);
-        }
-      })(),
-      sendThinking: (text) => (async () => {
-        if (closed) return;
+      sendToolTrace: (name, argumentsValue) => emit('tool trace', formatToolTrace(name, argumentsValue)),
+      sendThinking: (text) => {
         const line = formatThinkingLine(text);
-        if (!line) return;
-        try {
-          await sendLine(line);
-        } catch (error) {
-          warnFailure('thinking line', error);
-        }
-      })(),
+        return line ? emit('thinking line', line) : Promise.resolve();
+      },
       async finish(answer) {
         if (closed) throw new Error('Message stream is already closed');
         closed = true;
+        // The held frame is the last thing the turn thought about, so it goes
+        // out before the answer instead of after its own result. Then wait for
+        // every trace still in flight, so none can land behind the answer; the
+        // trace sends are already best-effort and never reject.
+        clearWindowTimer();
+        await sendHeld();
+        await settleInFlight();
         const format = answer && typeof answer === 'object' && answer.format === 'markdown'
           ? 'markdown'
           : 'plain';
@@ -1097,6 +1266,9 @@ export class TelegramBotClient {
       },
       cancel() {
         closed = true;
+        // A cancelled turn must not leave a timer that sends a stale frame.
+        clearWindowTimer();
+        held = null;
       },
     };
   }
@@ -1300,6 +1472,9 @@ export class TelegramRuntime {
         api,
         signal: controller.signal,
         logger: this.#logger,
+        // Trace frames are numbered and paced per bot; 0 seconds means no pacing.
+        thinkingNumbering: this.#config?.thinkingNumbering,
+        thinkingIntervalSeconds: this.#config?.thinkingIntervalSeconds,
       });
       this.#bridge = new TelegramHarnessBridge({
         bot: client,

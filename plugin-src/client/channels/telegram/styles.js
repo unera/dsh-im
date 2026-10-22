@@ -17,6 +17,8 @@ const CSS = String.raw`
 .dim-accountSettingsSwitch:disabled { opacity: 0.5; cursor: not-allowed; }
 .dim-accountSettingsNumber { appearance: textfield; flex: none; width: 64px; margin: 0; padding: 4px 6px; border: 1px solid var(--dsw-alias-border-l2, #dfe1e5); border-radius: 6px; background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-primary, #1f2329); font: inherit; font-size: 13px; line-height: 20px; text-align: center; }
 .dim-accountSettingsNumber:disabled { opacity: 0.5; cursor: not-allowed; }
+.dim-accountSettingsSelect { flex: none; min-width: 0; max-width: 60%; margin: 0; padding: 4px 6px; border: 1px solid var(--dsw-alias-border-l2, #dfe1e5); border-radius: 6px; background: var(--dsw-alias-bg-layer-1, #fff); color: var(--dsw-alias-label-primary, #1f2329); font: inherit; font-size: 13px; line-height: 20px; }
+.dim-accountSettingsSelect:disabled { opacity: 0.5; cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) { .dim-accountSettingsSwitch::before { transition: none; } }
 `;
 
