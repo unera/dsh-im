@@ -1,6 +1,7 @@
 import imageInput from '../../src/channels/shared/i18n-en/image-input.mjs';
 import diagnostics from '../../src/channels/shared/i18n-en/diagnostics.mjs';
 import weixinDiagnostics from '../../src/channels/weixin/connection-error.en.mjs';
+import { RU } from './i18n-ru.js';
 import * as React from 'react';
 
 export const IM_LOCALE_NAMESPACE = 'dsh-im';
@@ -1268,14 +1269,71 @@ export const zh = Object.freeze(Object.fromEntries(
   Object.keys(EN).map((key) => [key, key === '$locale' ? 'zh' : key]),
 ));
 
+// Russian, narrowed to the keys this UI asks for: the shared Host modules it is
+// built from also carry strings no settings surface renders, and a namespace
+// dictionary holding keys the English one does not know would let a mistyped
+// Chinese key hide behind a lookup that happens to miss. The English text is the
+// last resort for a key the narrowed dictionary somehow lost.
+export const ru = Object.freeze(Object.fromEntries(
+  Object.keys(EN).map((key) => [key, RU[key] ?? EN[key]]),
+));
+
 let translate = (key) => key;
 
 export function setImTranslator(next) {
   translate = typeof next === 'function' ? next : (key) => key;
 }
 
-export function isEnglish() {
-  return translate('$locale') === 'en';
+// The language these dictionaries are rendering in. Read through the `$locale`
+// entry rather than a snapshot taken at load time, so a locale whose dictionary
+// registers later is still reported correctly. Anything unrecognized means
+// Chinese, the identity language.
+export function imLocale() {
+  const id = translate('$locale');
+  return id === 'en' || id === 'ru' ? id : 'zh';
+}
+
+export const IM_RUSSIAN_LANGUAGE = Object.freeze({ id: 'ru', label: 'Русский', fallback: 'en' });
+
+/**
+ * Register Russian with the DSH locale registry: the definition makes it
+ * selectable and chains its lookups to English, and the dictionary goes in as
+ * one single-locale entry because `ru` is a language pack rather than one of the
+ * two built-in locales.
+ *
+ * The definition is skipped when the id is already occupied — another language
+ * pack may have registered `ru` first, and an occupied id is a hard error there.
+ * The dictionary is registered either way, so Russian strings still resolve.
+ *
+ * @param locale - the client `locale` service.
+ * @returns an idempotent disposer for both registrations.
+ */
+export function installImRussianLocale(locale) {
+  if (typeof locale?.register !== 'function') return () => {};
+  const disposers = [];
+  const defined = (locale.getLocale?.()?.locales ?? []).some(
+    (entry) => entry?.id === IM_RUSSIAN_LANGUAGE.id,
+  );
+  if (!defined && typeof locale.addLanguage === 'function') {
+    try {
+      disposers.push(locale.addLanguage(IM_RUSSIAN_LANGUAGE));
+    } catch (error) {
+      // The id may have been taken between the check and this call; that pack
+      // owns the definition now, and registering the dictionary is still safe.
+      if (!/already registered/iu.test(String(error?.message ?? ''))) throw error;
+    }
+  }
+  disposers.push(locale.register(IM_LOCALE_NAMESPACE, IM_RUSSIAN_LANGUAGE.id, ru));
+  return () => {
+    // Reverse order: the dictionary goes before the definition that chains to it.
+    for (const dispose of disposers.reverse()) {
+      try {
+        dispose?.();
+      } catch {
+        // A registry that already dropped the entry must not block teardown.
+      }
+    }
+  };
 }
 
 function channelName(value) {
@@ -1392,7 +1450,7 @@ function translateDynamic(text) {
 export function localizeText(value) {
   if (typeof value !== 'string') return value;
   const exact = translate(value);
-  if (exact !== value || !isEnglish()) return exact;
+  if (exact !== value || imLocale() !== 'en') return exact;
   return translateDynamic(value);
 }
 

@@ -58,7 +58,7 @@ import { installEmailStyles } from './channels/email/styles.js';
 import { MATRIX_RPC_CHANNEL } from './channels/matrix/api.js';
 import { MatrixSettingsTab } from './channels/matrix/index.js';
 import { installMatrixStyles } from './channels/matrix/styles.js';
-import { en, h, IM_LOCALE_NAMESPACE, setImTranslator, zh } from './i18n.js';
+import { en, h, IM_LOCALE_NAMESPACE, installImRussianLocale, setImTranslator, zh } from './i18n.js';
 import {
   HOST_LANGUAGE_RPC_CHANNEL,
   installInterfaceLanguageMirror,
@@ -455,6 +455,13 @@ export function apply(ctx) {
   ctx.effect(
     () => ctx.locale.register(IM_LOCALE_NAMESPACE, { zh, en }),
     'im-settings: bilingual dictionaries',
+  );
+  // Russian is a language pack rather than a built-in locale: it needs its own
+  // definition so it shows up in the Language row, and its lookups chain to
+  // English before falling back to the Chinese key itself.
+  ctx.effect(
+    () => installImRussianLocale(ctx.locale),
+    'im-settings: Russian language pack',
   );
   const t = ctx.locale.bind(IM_LOCALE_NAMESPACE);
   setImTranslator(t);

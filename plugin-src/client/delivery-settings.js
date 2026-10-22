@@ -8,7 +8,7 @@ import { FeishuGroupSettingsPage } from './channels/feishu/group-settings.js';
 import { FeishuVoiceSettingsPage } from './channels/feishu/voice-settings.js';
 import { FeishuSlashPanelSettingsPage } from './channels/feishu/slash-panel-settings.js';
 import { TelegramGroupTriggersSettings } from './channels/telegram/group-triggers-settings.js';
-import { h, isEnglish, localizeText } from './i18n.js';
+import { h, imLocale, localizeText } from './i18n.js';
 
 export const DELIVERY_RPC_CHANNEL = '/dsh-im-delivery';
 
@@ -833,7 +833,7 @@ export function DeliveryTargetSettingsPage({
         account.botName || '机器人设置'),
       h('a', {
         className: 'dim-deliveryDocsLink',
-        href: isEnglish() ? DELIVERY_DOCS_URL.en : DELIVERY_DOCS_URL.zh,
+        href: imLocale() === 'zh' ? DELIVERY_DOCS_URL.zh : DELIVERY_DOCS_URL.en,
         target: '_blank',
         rel: 'noopener noreferrer',
         'aria-label': '打开主动投递使用文档',
