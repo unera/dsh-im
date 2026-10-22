@@ -5,6 +5,15 @@ import {
   TokenBotConfigStore,
 } from '../shared/token-config-store.mjs';
 import { normalizeGroupTriggers } from './group-triggers.mjs';
+import { normalizeSendLimitPerMinute } from '../shared/send-limit.mjs';
+
+export {
+  DEFAULT_SEND_LIMIT_PER_MINUTE,
+  normalizeSendLimitPerMinute,
+  SEND_LIMIT_MAX_PER_MINUTE,
+  SEND_LIMIT_MIN_PER_MINUTE,
+  SET_SEND_LIMIT_ENDPOINT,
+} from '../shared/send-limit.mjs';
 
 const IDENTITY_OPTIONS = Object.freeze({
   botPrefix: 'telegram',
@@ -53,7 +62,9 @@ function normalizeTelegramBotExtension(value) {
   const hasAllowedUsers = Object.hasOwn(value, 'allowedUsers');
   const hasThinkingTraces = Object.hasOwn(value, 'thinkingTraces');
   const hasGroupTriggers = Object.hasOwn(value, 'groupTriggers');
-  if (!hasAccessMode && !hasAllowedUsers && !hasThinkingTraces && !hasGroupTriggers) return {};
+  const hasSendLimit = Object.hasOwn(value, 'sendLimitPerMinute');
+  if (!hasAccessMode && !hasAllowedUsers && !hasThinkingTraces && !hasGroupTriggers
+    && !hasSendLimit) return {};
   try {
     const policy = normalizeTelegramAccessPolicy(value);
     return {
@@ -63,6 +74,8 @@ function normalizeTelegramBotExtension(value) {
       ...(hasThinkingTraces ? { thinkingTraces: value.thinkingTraces === true } : {}),
       // Per-group reply triggers; absent means "no rule configured".
       ...(hasGroupTriggers ? { groupTriggers: normalizeGroupTriggers(value.groupTriggers) } : {}),
+      // Stored clamped so a bad value never reaches the runtime.
+      ...(hasSendLimit ? { sendLimitPerMinute: normalizeSendLimitPerMinute(value.sendLimitPerMinute) } : {}),
     };
   } catch {
     return null;

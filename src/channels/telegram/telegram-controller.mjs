@@ -2,6 +2,7 @@ import { TokenBotController } from '../shared/token-bot-controller.mjs';
 import {
   deriveTelegramBotIdentity,
   maskTelegramBotId,
+  normalizeSendLimitPerMinute,
   normalizeTelegramAccessPolicy,
 } from './config-store.mjs';
 import {
@@ -55,6 +56,7 @@ export class TelegramController extends TokenBotController {
           // Default ON; only an explicit false in the config opts out.
           thinkingTraces: config?.thinkingTraces !== false,
           groupTriggers: normalizeGroupTriggers(config?.groupTriggers),
+          sendLimitPerMinute: normalizeSendLimitPerMinute(config?.sendLimitPerMinute),
         };
       }),
     };
@@ -70,6 +72,12 @@ export class TelegramController extends TokenBotController {
       ...config,
       thinkingTraces: value === true,
     }));
+  }
+
+  /** Persist the per-chat send limit; the runtime restarts with the new value. */
+  async setSendLimitPerMinute(botId, value) {
+    const sendLimitPerMinute = normalizeSendLimitPerMinute(value);
+    return this.updateBotConfig(botId, (config) => ({ ...config, sendLimitPerMinute }));
   }
 
   /** Channels the bot has actually received messages from. */

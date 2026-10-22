@@ -20,6 +20,7 @@ import {
   toTelegramRichMarkdown,
 } from './telegram-rich-message.mjs';
 import {
+  normalizeSendLimitPerMinute,
   TELEGRAM_ACCESS_MODES,
 } from './config-store.mjs';
 
@@ -787,6 +788,17 @@ export class TelegramBotClient {
         );
       }
     }
+    // A resolved call is not a delivered answer: without a message id the
+    // reader may still be staring at nothing, so the final answer claims only
+    // what it can prove and lets the caller report the rest.
+    if (providerMessageIds.length !== chunks.length) {
+      return deliveryResult(
+        'text-fallback',
+        providerMessageIds,
+        'unknown',
+        'telegram-message-id-missing',
+      );
+    }
     return deliveryResult('text-fallback', providerMessageIds);
   }
 
@@ -853,6 +865,16 @@ export class TelegramBotClient {
           fallback.reason,
         );
       }
+    }
+    // Same proof as the plain path: a rich send that never returned an id
+    // cannot be reported as delivered.
+    if (providerMessageIds.length !== chunks.length) {
+      return deliveryResult(
+        'telegram-rich-final',
+        providerMessageIds,
+        'unknown',
+        'telegram-message-id-missing',
+      );
     }
     return deliveryResult('telegram-rich-final', providerMessageIds);
   }
@@ -1249,6 +1271,10 @@ export class TelegramRuntime {
         token: this.#token,
         fetchImpl: transport.fetchImpl,
         FormDataImpl: transport.FormDataImpl,
+        // Telegram budgets new messages per chat; the bot waits for a free slot
+        // instead of dropping the message, and retries after a 429.
+        sendLimitPerMinute: normalizeSendLimitPerMinute(this.#config?.sendLimitPerMinute),
+        logger: this.#logger,
       });
       this.#api = api;
       const bot = await api.getMe({ signal: controller.signal });

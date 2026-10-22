@@ -546,16 +546,6 @@ test('Telegram document errors retain provider details and use stable artifact r
     status: 400,
     code: 'artifact-too-large',
   }, {
-    body: {
-      ok: false,
-      error_code: 429,
-      description: 'Too Many Requests',
-      parameters: { retry_after: 7 },
-    },
-    status: 429,
-    code: 'artifact-rate-limited',
-    retryAfter: 7,
-  }, {
     body: { ok: false, error_code: 400, description: 'Bad Request: unsupported document' },
     status: 400,
     code: 'artifact-provider-rejected',
@@ -582,6 +572,39 @@ test('Telegram document errors retain provider details and use stable artifact r
       return true;
     });
   }
+});
+
+test('a rate-limited document send is retried and then reported as channel-rate-limit', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  let attempts = 0;
+  const api = new TelegramApi({
+    token: TOKEN,
+    fetchImpl: async () => {
+      attempts += 1;
+      return jsonResponse({
+        ok: false,
+        error_code: 429,
+        description: 'Too Many Requests',
+        parameters: { retry_after: 7 },
+      }, 429);
+    },
+  });
+  const delivery = api.sendDocument({
+    chatId: 123,
+    file: { fileName: 'result.bin', bytes: Buffer.from('result') },
+  }).then(() => null, (error) => error);
+  for (let waited = 0; waited < 3; waited += 1) {
+    await new Promise((resolve) => { setImmediate(resolve); });
+    t.mock.timers.tick(7_000);
+    await new Promise((resolve) => { setImmediate(resolve); });
+  }
+  const error = await delivery;
+  assert.equal(attempts, 4, 'one original call and three retries');
+  assert.equal(error.code, 'channel-rate-limit');
+  assert.equal(error.providerCode, 429);
+  assert.equal(error.status, 429);
+  assert.equal(error.retry_after, 7);
+  assert.equal(error.retryAfter, 7);
 });
 
 test('Telegram document delivery marks post-dispatch failures uncertain but preserves caller aborts', async () => {
