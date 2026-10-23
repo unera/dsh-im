@@ -105,7 +105,8 @@ export function createDeferredDeliveryRegistry(store, {
   return {
     deferredId,
     async register({
-      key, chatId = null, target = null, replyToMessageId = null, sessionId, turn = null, afterSeq = -1, promptRpcId = null,
+      key, chatId = null, target = null, replyToMessageId = null, sessionId, turn = null, afterSeq = -1,
+      promptRpcId = null, waitForNextTurn = false,
     }) {
       if (typeof key !== 'string' || !key) throw new TypeError('key is required');
       if ((!chatId || typeof chatId !== 'string') && (!target || typeof target !== 'object')) {
@@ -120,6 +121,7 @@ export function createDeferredDeliveryRegistry(store, {
         replyToMessageId: typeof replyToMessageId === 'string' ? replyToMessageId : null,
         sessionId,
         promptRpcId,
+        waitForNextTurn: waitForNextTurn === true,
         turn: Number.isSafeInteger(turn) ? turn : null,
         afterSeq: Number.isSafeInteger(afterSeq) ? afterSeq : -1,
         lastSeenEndSeq: -1,

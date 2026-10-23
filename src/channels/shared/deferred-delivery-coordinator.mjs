@@ -99,10 +99,18 @@ export function createDeferredDeliveryCoordinator({
       }
       const reachedCursor = !history.hasMore || ordered[0]?.seq <= entry.afterSeq;
       if (targetTurn === null && !entry.promptRpcId && reachedCursor) {
-        // Legacy #153 rows had no prompt identity. Never select a completion
-        // preceding the saved cursor, or a newer arbitrary completed turn.
-        targetTurn = ordered.find((event) => event.type === 'turn/end'
-          && event.seq > entry.afterSeq)?.data?.turn ?? null;
+        // Wake rows are created while the parent turn may still be active. Its
+        // later turn/end is not the subagent follow-up, so require a fresh
+        // turn/start after the wake splice before selecting a completion.
+        if (entry.waitForNextTurn === true) {
+          targetTurn = ordered.find((event) => event.type === 'turn/start'
+            && event.seq > entry.afterSeq)?.data?.turn ?? null;
+        } else {
+          // Legacy #153 rows had no prompt identity. Never select a completion
+          // preceding the saved cursor, or a newer arbitrary completed turn.
+          targetTurn = ordered.find((event) => event.type === 'turn/end'
+            && event.seq > entry.afterSeq)?.data?.turn ?? null;
+        }
       }
       const outcome = targetTurn === null
         ? { found: false, endSeq: -1, turn: null }
@@ -211,7 +219,7 @@ export function createDeferredDeliveryCoordinator({
         || typeof sessionId !== 'string' || !sessionId || !Number.isSafeInteger(afterSeq)) return;
       if (state.sessionFor(key) !== sessionId) return;
       const entry = await registry.register({ key, sessionId, turn: null,
-        afterSeq, ...delivery, target });
+        afterSeq, waitForNextTurn: true, ...delivery, target });
       void enqueue(sessionId, () => process(entry.id, { urgent: true })).catch(warn);
     },
     async trackTimeout(error, { key, sessionId, ...delivery }) {

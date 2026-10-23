@@ -50,24 +50,24 @@ test('only reply timeouts are tracked; duplicate terminal events consume the row
   assert.deepEqual(f.state.deferredEntries(), []);
 });
 
-test('subagent settlement splice wakes and delivers the following completed turn once', async (t) => {
+test('subagent settlement splice skips the active parent turn and delivers the next turn once', async (t) => {
   const followup = [
-    event('turn/start', 5, { turn: 4 }),
-    event('agent/inbox/spliced', 6, { inserted: [{ source: { kind: 'subagent-settled' } }] }),
-    event('assistant/message', 7, { turn: 4, step: 0, message: { content: [{ type: 'text', text: 'settled result' }] } }),
-    event('turn/end', 8, { turn: 4, reason: 'completed' }),
+    event('agent/inbox/spliced', 5, { inserted: [{ source: { kind: 'subagent-settled' } }] }),
+    // The settlement can arrive while turn 3 is still active. Its closing
+    // answer must not be relayed as the subagent report.
+    event('assistant/message', 6, { turn: 3, step: 0, message: { content: [{ type: 'text', text: 'parent launch message' }] } }),
+    event('turn/end', 7, { turn: 3, reason: 'completed' }),
+    event('turn/start', 8, { turn: 4 }),
+    event('assistant/message', 9, { turn: 4, step: 0, message: { content: [{ type: 'text', text: 'settled result' }] } }),
+    event('turn/end', 10, { turn: 4, reason: 'completed' }),
   ];
   const f = await fixture(t, { harness: { rpc: async () => ({ events: [...complete, ...followup], hasMore: false }) } });
-  await f.coordinator.trackWake({ key: 'chat', sessionId: 'session', target: { chatId: 'destination' }, afterSeq: 4 });
-  await f.coordinator.onEvent({ sessionId: 'session', event: event('agent/inbox/spliced', 4, {
-    inserted: [{ source: { kind: 'subagent-settled' } }],
-  }) });
+  await f.coordinator.trackWake({ key: 'chat', sessionId: 'session', target: { chatId: 'destination' }, afterSeq: 5 });
+  await f.coordinator.onEvent({ sessionId: 'session', event: followup[0] });
   await f.coordinator.whenIdle();
   assert.equal(f.sent.length, 1);
   assert.equal(f.sent[0].outcome.text, 'settled result');
-  await f.coordinator.onEvent({ sessionId: 'session', event: event('agent/inbox/spliced', 4, {
-    inserted: [{ source: { kind: 'subagent-settled' } }],
-  }) });
+  await f.coordinator.onEvent({ sessionId: 'session', event: followup[0] });
   assert.equal(f.sent.length, 1);
 });
 
