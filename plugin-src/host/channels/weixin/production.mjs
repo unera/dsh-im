@@ -164,6 +164,7 @@ export async function createProductionController(ctx, config = {}, internals = {
         initialAccessPolicy: initialAccessPolicyFor('weixin', accountConfig),
       });
       const workspaceScope = createBotWorkspaceScope(harness, {
+        dsBot: config.deliveryService?.dsBot,
         botId, workspaces, state, agentPresetCatalog,
       });
       return new Runtime({
@@ -235,7 +236,7 @@ export async function createProductionController(ctx, config = {}, internals = {
   }).start();
   return {
     controller,
-    deliveryAdapter: createDeliveryAdapter({
+    deliveryAdapter: createDeliveryAdapter({ dsBot: config.deliveryService?.dsBot,
       channel: 'weixin', workspaces, coreController, stateFor,
     }),
     ready: supervisor.ready,

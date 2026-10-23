@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createSidebarSettingsRpcHandler, hasConfiguredChannel, SidebarSettingsStore } from '../plugin-src/host/sidebar-settings.mjs';
+import { createSidebarSettingsRpcHandler, hasConfiguredChannel, installSidebarSettingsRpc, SidebarSettingsStore } from '../plugin-src/host/sidebar-settings.mjs';
 import { QqConfigStore, deriveQqBotIdentity } from '../src/channels/qq/config-store.mjs';
 import { WeixinConfigStore, deriveWeixinBotIdentity } from '../src/channels/weixin/config-store.mjs';
 import { OfficeConfigStore } from '../src/channels/office/config-store.mjs';
@@ -85,20 +85,50 @@ test('invalid and cancelled RPC requests never write; store serializes writes', 
   assert.equal((await call('settings.sidebar-entry.set', { mode: 'show' })).ok, true);
 });
 
-test('shared general settings route dispatches sidebar RPC and keeps loopback authority', async (t) => {
-  let registration;
-  const dshHome = await home(t);
-  const ctx = { connection: { fetch: { register(options) { registration = options; return () => {}; } } } };
-  installInboundTtlRpc(ctx, { config: { dshHome }, runtime: {
-    store: { getTtlHours() { return 24; }, setTtlHours() {} }, service: { sweepNow() {} },
-  }, groupHistory: {} });
-  const request = (host) => new Request(`http://${host}/api/dsh-im/dsh-im-settings`, {
-    method: 'POST', headers: { host, 'content-type': 'application/json' }, body: JSON.stringify({
-      type: 'client-request', rpcId: 'sidebar', method: 'dsh-im/dsh-im-settings',
-      payload: { method: 'settings.sidebar-entry.get', payload: {} },
-    }),
-  });
-  assert.equal((await registration.fetch(request('192.168.1.1'))).status, 403);
-  const response = await registration.fetch(request('localhost'));
-  assert.deepEqual((await response.json()).result, { ok: true, value: { mode: 'auto', visible: true } });
+test('sidebar RPC follows channel authority while general settings remain loopback-only', async (t) => {
+  for (const rpcAuthority of [undefined, 'trusted-host', 'loopback']) {
+    await t.test(rpcAuthority ?? 'default', async (t) => {
+      const dshHome = await home(t);
+      const config = { dshHome, rpcAuthority };
+      const routes = new Map();
+      const ctx = { connection: { fetch: { register(options) {
+        routes.set(options.path, options); return () => {};
+      } } } };
+      installSidebarSettingsRpc(ctx, { config });
+      installInboundTtlRpc(ctx, { config, runtime: {
+        store: { getTtlHours() { return 24; }, setTtlHours() {} }, service: { sweepNow() {} },
+      }, groupHistory: {} });
+      const request = (host, channel, method, payload = {}) => {
+        const path = `/api/dsh-im/${channel}`;
+        return routes.get(path).fetch(new Request(`http://${host}${path}`, {
+          method: 'POST', headers: { host, origin: `http://${host}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            type: 'client-request', rpcId: 'sidebar', method: `dsh-im/${channel}`, payload: { method, payload },
+          }),
+        }));
+      };
+      for (const host of ['localhost', '192.168.1.1:3080', 'dsh.example.com']) {
+        const response = await request(host, 'dsh-im-sidebar', 'settings.sidebar-entry.get');
+        if (rpcAuthority === 'loopback' && host !== 'localhost') {
+          assert.equal(response.status, 403);
+          assert.equal((await request(host, 'dsh-im-sidebar', 'settings.sidebar-entry.set', { mode: 'show' })).status, 403);
+          continue;
+        }
+        assert.equal(response.status, 200);
+        assert.deepEqual((await response.json()).result, { ok: true, value: { mode: 'auto', visible: true } });
+        for (const mode of ['hide', 'show', 'auto']) {
+          const saved = await request(host, 'dsh-im-sidebar', 'settings.sidebar-entry.set', { mode });
+          assert.deepEqual((await saved.json()).result, { ok: true, value: { mode, visible: mode !== 'hide' } });
+        }
+      }
+      for (const host of ['192.168.1.1:3080', 'dsh.example.com']) {
+        assert.equal((await request(host, 'dsh-im-settings', 'settings.inbound-ttl.get')).status, 403);
+        assert.equal((await request(host, 'dsh-im-settings', 'settings.inbound-ttl.set', { ttlHours: 0 })).status, 403);
+      }
+      const ttl = await request('localhost', 'dsh-im-settings', 'settings.inbound-ttl.get');
+      assert.equal((await ttl.json()).result.value.ttlHours, 24);
+      const misplacedTtl = await request('localhost', 'dsh-im-sidebar', 'settings.inbound-ttl.set', { ttlHours: 0 });
+      assert.equal((await misplacedTtl.json()).result.error.code, 'bad-request');
+    });
+  }
 });

@@ -26,6 +26,7 @@ export function createDeferredDeliveryCoordinator({
   harness, state, deliver, signal, logger = console,
   retryDelayMs = 1_000, pollDelayMs = 30_000, watch = true,
   finalAnswerOnly = false,
+  onWake = null,
 } = {}) {
   const enabled = ['deferredEntries', 'putDeferred', 'patchDeferred', 'removeDeferred']
     .every((name) => typeof state?.[name] === 'function');
@@ -67,6 +68,9 @@ export function createDeferredDeliveryCoordinator({
     await registry.remove(entry);
   }
   async function readOutcome(entry) {
+    if (typeof entry.directText === 'string' && entry.directText.trim()) {
+      return { found: true, endSeq: entry.afterSeq, turn: entry.turn, text: entry.directText.trim() };
+    }
     // A result may be older than the latest history page after a restart.
     // Recover the whole target turn instead of treating a missing page as empty.
     const events = new Map();
@@ -98,10 +102,18 @@ export function createDeferredDeliveryCoordinator({
       }
       const reachedCursor = !history.hasMore || ordered[0]?.seq <= entry.afterSeq;
       if (targetTurn === null && !entry.promptRpcId && reachedCursor) {
-        // Legacy #153 rows had no prompt identity. Never select a completion
-        // preceding the saved cursor, or a newer arbitrary completed turn.
-        targetTurn = ordered.find((event) => event.type === 'turn/end'
-          && event.seq > entry.afterSeq)?.data?.turn ?? null;
+        // Wake rows are created while the parent turn may still be active. Its
+        // later turn/end is not the subagent follow-up, so require a fresh
+        // turn/start after the wake splice before selecting a completion.
+        if (entry.waitForNextTurn === true) {
+          targetTurn = ordered.find((event) => event.type === 'turn/start'
+            && event.seq > entry.afterSeq)?.data?.turn ?? null;
+        } else {
+          // Legacy #153 rows had no prompt identity. Never select a completion
+          // preceding the saved cursor, or a newer arbitrary completed turn.
+          targetTurn = ordered.find((event) => event.type === 'turn/end'
+            && event.seq > entry.afterSeq)?.data?.turn ?? null;
+        }
       }
       const outcome = targetTurn === null
         ? { found: false, endSeq: -1, turn: null }
@@ -205,6 +217,15 @@ export function createDeferredDeliveryCoordinator({
     timers.clear();
   }, { once: true });
   const api = {
+    async trackWake({ key, sessionId, afterSeq, target, directText = null, ...delivery } = {}) {
+      if (!enabled || activeSignal.aborted || typeof key !== 'string' || !key
+        || typeof sessionId !== 'string' || !sessionId || !Number.isSafeInteger(afterSeq)) return;
+      if (state.sessionFor(key) !== sessionId) return;
+      const direct = typeof directText === 'string' && directText.trim() ? directText.trim() : null;
+      const entry = await registry.register({ key, sessionId, turn: direct ? afterSeq : null,
+        afterSeq, waitForNextTurn: direct === null, directText: direct, ...delivery, target });
+      void enqueue(sessionId, () => process(entry.id, { urgent: true })).catch(warn);
+    },
     async trackTimeout(error, { key, sessionId, ...delivery }) {
       if (!enabled || error?.code !== 'harness-reply-timeout' || activeSignal.aborted) return;
       const details = error.details ?? {};
@@ -218,7 +239,12 @@ export function createDeferredDeliveryCoordinator({
       void enqueue(target, () => process(entry.id)).catch(warn);
     },
     async onEvent({ sessionId, event } = {}) {
-      if (!enabled || activeSignal.aborted || event?.type !== 'turn/end') return;
+      if (!enabled || activeSignal.aborted || typeof sessionId !== 'string' || !event) return;
+      if (event.type === 'agent/inbox/spliced') {
+        await onWake?.({ sessionId, event, coordinator: api });
+        return;
+      }
+      if (event.type !== 'turn/end') return;
       const entries = await registry.pendingForSession(sessionId);
       await Promise.allSettled(entries
         .filter((entry) => !Number.isSafeInteger(entry.turn) || entry.turn === event.data?.turn)

@@ -1,11 +1,39 @@
 import imageInput from '../../src/channels/shared/i18n-en/image-input.mjs';
 import diagnostics from '../../src/channels/shared/i18n-en/diagnostics.mjs';
 import weixinDiagnostics from '../../src/channels/weixin/connection-error.en.mjs';
+import { RU } from './i18n-ru.js';
 import * as React from 'react';
 
 export const IM_LOCALE_NAMESPACE = 'dsh-im';
 
 const EN = Object.freeze({
+  "私聊对象": "Private chat",
+  "选择私聊对象": "Select a private chat",
+  "仅支持已经建立会话的私聊，请先与机器人私聊后刷新。": "Only established private chats are supported. Message the bot privately, then refresh.",
+  "选择 DS Bot 和私聊对象，直接使用 Bot 的会话。": "Choose a DS Bot and a private chat to use the Bot’s session.",
+  "还没有可绑定的私聊。先给这个机器人发一条私聊消息，再点击刷新。": "No private chats yet. Send this bot a private message, then refresh.",
+
+  "绑定bot": "Bind bot",
+  "正在检测 DS Bot…": "Checking DS Bot…",
+  "选择 DS Bot": "Select DS Bot",
+  "暂无可选 DS Bot": "No available DS Bots",
+  "暂无可选私聊对象": "No available private chats",
+  "已绑定的 DS Bot 和私聊对象不可重复选择，解除绑定后可重新选择。": "Bound DS Bots and private chats cannot be selected again. Unbind them to make them available.",
+  "所选 DS Bot 或私聊对象已绑定，请刷新后重新选择。": "The selected DS Bot or private chat is already bound. Refresh and choose again.",
+  "解除绑定": "Unbind",
+  "已绑定": "Bound",
+  "未安装 DS Bot，请先在 DSH 插件管理中安装 ds-bot，然后刷新。": "DS Bot is not installed. Install ds-bot in DSH plugin management, then refresh.",
+  "DS Bot 尚未启用，请在 DSH 插件管理中启用后刷新。": "DS Bot is disabled. Enable it in DSH plugin management, then refresh.",
+  "暂时无法读取 DS Bot，请检查插件是否正常运行后重试。": "Unable to read DS Bot. Check that the plugin is running, then retry.",
+  "DS Bot 当前由其他 Host 管理，请在运行它的 Host 中绑定。": "DS Bot is managed by another Host. Bind it on that Host.",
+  "绑定bot仅支持当前 Host 的会话，请先检查机器人的 Harness 连接设置。": "Bot binding requires the current Host. Check the bot’s Harness connection settings.",
+  "所选 DS Bot 已不存在，请刷新后重新选择。": "The selected DS Bot no longer exists. Refresh and select another.",
+  "绑定设置保存失败，请刷新后重试。": "Could not save the binding. Refresh and retry.",
+  "绑定已保存。": "Binding saved.",
+  "已解除绑定，聊天记录保留。": "Binding removed. Chat history is preserved.",
+  "还没有 DS Bot，请先在 DS Bot 中创建机器人后刷新。": "No bots yet. Create a bot in DS Bot, then refresh.",
+  "DS Bot 暂不可用": "DS Bot unavailable",
+
   ...weixinDiagnostics,
   ...diagnostics,
   ...imageInput,
@@ -67,7 +95,6 @@ const EN = Object.freeze({
   'macOS Messages 权限': 'macOS Messages permissions',
   'IM机器人': 'IM bots',
   '打开 IM机器人': 'Open IM bots',
-  '返回插件详情': 'Back to plugin details',
   'IM机器人设置': 'IM bot settings',
   'IM 面板加载失败': 'Could not load the IM panel',
   '更多机器人设置': 'More bot settings',
@@ -78,6 +105,38 @@ const EN = Object.freeze({
   '机器人设置': 'Bot settings',
   '机器人设置页签': 'Bot settings tabs',
   '投递设置': 'Delivery settings',
+  '机器人群聊行为': 'Bot in groups',
+  '新群聊默认设置': 'Default for new groups',
+  '响应条件': 'React to',
+  '不响应': 'Do not react',
+  '被 @ 或回复时（任何人）': 'Mention or reply, anyone',
+  '被 @ 或回复时（仅名单成员）': 'Mention or reply, listed members only',
+  '所有消息（任何人）': 'All messages, anyone',
+  '所有消息（仅名单成员）': 'All messages, listed members only',
+  '成员名单': 'Members list',
+  '名单为空：该模式不会响应任何成员。': 'The list is empty, so nobody can trigger the bot in this mode.',
+  '当前模式不使用名单。': 'This mode does not use the list.',
+  '群 ID': 'Group',
+  '标题': 'Title',
+  '最近活动': 'Last activity',
+  '（默认）': ' (default)',
+  '× 移除': '× Remove',
+  '自定义': 'Customize',
+  '添加群聊': 'Add group',
+  '群 ID、@用户名或消息链接': 'Group ID, @username or message link',
+  '支持数字 ID、@用户名、t.me/<name> 或 t.me/c/<id>/<msg>；真实 ID 通过 getChat 解析。': 'Accepts a numeric ID, @username, t.me/<name> or t.me/c/<id>/<msg>; the real ID is resolved through getChat.',
+  '+ 添加': '+ Add',
+  '保存群聊设置': 'Save group settings',
+  '已从列表移除，保存后生效。': 'Removed from the list. Save to apply.',
+  '已添加，保存后生效。': 'Added. Save to apply.',
+  '已添加。Telegram 未确认该群（机器人可能还不在群里），保存后生效。': 'Added without Telegram confirmation (the bot may not be in that group yet). Save to apply.',
+  '群聊设置已保存。': 'Group settings saved.',
+  '正在读取群聊设置…': 'Loading group settings…',
+  '无法读取群聊设置，请稍后重试。': 'Unable to read group settings. Try again.',
+  '无法保存群聊设置，请稍后重试。': 'Unable to save group settings. Try again.',
+  '无法读取或保存群聊设置，请稍后重试。': 'Unable to read or save group settings. Try again.',
+  '无法解析该群聊，请重试或填写数字群 ID。': 'Could not resolve this group. Try again or enter the numeric group ID.',
+  '该群已在列表中，请编辑上方的卡片。': 'This group is already in the list. Edit its card above instead.',
   '访问设置': 'Access settings',
   '查看访问权限说明': 'View access permission details',
   '允许所有用户': 'Allow all users',
@@ -780,6 +839,15 @@ const EN = Object.freeze({
   '思考过程留痕': 'Thinking traces',
   '实时显示思考步骤与工具调用，最终答案单独成条': 'Show thinking steps and tool calls as they happen; the final answer arrives as its own message',
   '请提交有效的思考过程留痕设置。': 'Submit a valid thinking-traces setting.',
+  '消息发送上限': 'Message limit',
+  '每个聊天每分钟的消息数；机器人会等待而不是丢弃': 'Per chat, messages per minute; the bot waits instead of dropping',
+  '请提交有效的消息发送上限。': 'Submit a valid message limit.',
+  '编号思考帧': 'Number trace frames',
+  '在每帧前加上本轮序号；被节奏跳过的帧也计数，所以编号会跳号（需先打开思考过程留痕）': 'Prefix each frame with its number in the turn; paced-away frames still count, so numbers jump. Requires thinking traces.',
+  '最多每隔多久发送一帧（秒）': 'Send at most one frame every (seconds)',
+  '突发时只发送窗口里最新的一帧，过期的帧丢弃，不排队也不重发': 'A burst sends only its latest frame; stale frames are dropped, not queued or resent',
+  '不限制（0）': 'No limit (0)',
+  '请提交有效的思考帧节奏设置。': 'Submit a valid trace cadence setting.',
   '正在使用{name}…': 'Using {name}…',
   '访问模式': 'Access mode',
   'Telegram 访问模式': 'Telegram access mode',
@@ -1201,14 +1269,71 @@ export const zh = Object.freeze(Object.fromEntries(
   Object.keys(EN).map((key) => [key, key === '$locale' ? 'zh' : key]),
 ));
 
+// Russian, narrowed to the keys this UI asks for: the shared Host modules it is
+// built from also carry strings no settings surface renders, and a namespace
+// dictionary holding keys the English one does not know would let a mistyped
+// Chinese key hide behind a lookup that happens to miss. The English text is the
+// last resort for a key the narrowed dictionary somehow lost.
+export const ru = Object.freeze(Object.fromEntries(
+  Object.keys(EN).map((key) => [key, RU[key] ?? EN[key]]),
+));
+
 let translate = (key) => key;
 
 export function setImTranslator(next) {
   translate = typeof next === 'function' ? next : (key) => key;
 }
 
-export function isEnglish() {
-  return translate('$locale') === 'en';
+// The language these dictionaries are rendering in. Read through the `$locale`
+// entry rather than a snapshot taken at load time, so a locale whose dictionary
+// registers later is still reported correctly. Anything unrecognized means
+// Chinese, the identity language.
+export function imLocale() {
+  const id = translate('$locale');
+  return id === 'en' || id === 'ru' ? id : 'zh';
+}
+
+export const IM_RUSSIAN_LANGUAGE = Object.freeze({ id: 'ru', label: 'Русский', fallback: 'en' });
+
+/**
+ * Register Russian with the DSH locale registry: the definition makes it
+ * selectable and chains its lookups to English, and the dictionary goes in as
+ * one single-locale entry because `ru` is a language pack rather than one of the
+ * two built-in locales.
+ *
+ * The definition is skipped when the id is already occupied — another language
+ * pack may have registered `ru` first, and an occupied id is a hard error there.
+ * The dictionary is registered either way, so Russian strings still resolve.
+ *
+ * @param locale - the client `locale` service.
+ * @returns an idempotent disposer for both registrations.
+ */
+export function installImRussianLocale(locale) {
+  if (typeof locale?.register !== 'function') return () => {};
+  const disposers = [];
+  const defined = (locale.getLocale?.()?.locales ?? []).some(
+    (entry) => entry?.id === IM_RUSSIAN_LANGUAGE.id,
+  );
+  if (!defined && typeof locale.addLanguage === 'function') {
+    try {
+      disposers.push(locale.addLanguage(IM_RUSSIAN_LANGUAGE));
+    } catch (error) {
+      // The id may have been taken between the check and this call; that pack
+      // owns the definition now, and registering the dictionary is still safe.
+      if (!/already registered/iu.test(String(error?.message ?? ''))) throw error;
+    }
+  }
+  disposers.push(locale.register(IM_LOCALE_NAMESPACE, IM_RUSSIAN_LANGUAGE.id, ru));
+  return () => {
+    // Reverse order: the dictionary goes before the definition that chains to it.
+    for (const dispose of disposers.reverse()) {
+      try {
+        dispose?.();
+      } catch {
+        // A registry that already dropped the entry must not block teardown.
+      }
+    }
+  };
 }
 
 function channelName(value) {
@@ -1325,7 +1450,7 @@ function translateDynamic(text) {
 export function localizeText(value) {
   if (typeof value !== 'string') return value;
   const exact = translate(value);
-  if (exact !== value || !isEnglish()) return exact;
+  if (exact !== value || imLocale() !== 'en') return exact;
   return translateDynamic(value);
 }
 

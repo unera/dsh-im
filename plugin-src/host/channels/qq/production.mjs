@@ -122,6 +122,7 @@ export async function createProductionController(ctx, config = {}, internals = {
         initialAccessPolicy: newBotAccessPolicyFor('qq', botConfig),
       });
       const workspaceScope = createBotWorkspaceScope(harness, {
+        dsBot: config.deliveryService?.dsBot,
         botId, workspaces, state, agentPresetCatalog,
       });
       return new Runtime({
@@ -173,7 +174,7 @@ export async function createProductionController(ctx, config = {}, internals = {
   }).start();
   return {
     controller,
-    deliveryAdapter: createDeliveryAdapter({ channel: 'qq', workspaces, coreController, stateFor }),
+    deliveryAdapter: createDeliveryAdapter({ dsBot: config.deliveryService?.dsBot, channel: 'qq', workspaces, coreController, stateFor }),
     ready: supervisor.ready,
     async close() {
       await supervisor.close();

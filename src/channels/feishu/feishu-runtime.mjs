@@ -713,6 +713,16 @@ export class FeishuRuntime {
     }, options);
   }
 
+  async presentSessionSyncQuestion(target, interaction, options = {}) {
+    if (!this.#status.ready || !this.#bridge || target?.kind !== 'user') return false;
+    const actor = nonEmptyString(target.route?.openId);
+    if (!actor) return false;
+    return this.#bridge.presentSessionSyncQuestion(interaction, {
+      key: options.key, actor, validate: options.validate,
+      chatId: actor, receiveIdType: 'open_id', requiresMention: false,
+    }, options);
+  }
+
   async sendProactiveText(target, text, { signal, format = 'plain', receipt = false } = {}) {
     if (!this.#status.ready || !this.#client) {
       const error = new Error('飞书机器人尚未连接');

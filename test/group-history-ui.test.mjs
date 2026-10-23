@@ -21,6 +21,9 @@ test('General tab configures sidebar and retention and retains Attachments navig
   assert.equal(renderer.root.findAllByProps({ role: 'switch' }).length, 0);
   assert.equal(renderer.root.findAllByProps({ className: 'dim-groupHistoryList' }).length, 0);
   assert.deepEqual(calls.map((call) => call.endpoint), ['settings.sidebar-entry.get', 'settings.group-history.get']);
+  assert.equal(renderer.root.findAllByProps({ type: 'submit' }).length, 1,
+    'only retention settings need a Save button');
+  assert.equal(renderer.root.findByProps({ 'aria-label': '侧边栏入口' }).findAllByType('form').length, 0);
   const form = () => renderer.root.findByProps({ 'aria-label': '群聊天记录' }).findByType('form');
   await act(async () => { input().props.onChange({ target: { value: '0' } }); });
   await act(async () => { await form().props.onSubmit({ preventDefault() {} }); });

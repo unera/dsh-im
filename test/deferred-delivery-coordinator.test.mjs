@@ -50,6 +50,24 @@ test('only reply timeouts are tracked; duplicate terminal events consume the row
   assert.deepEqual(f.state.deferredEntries(), []);
 });
 
+test('subagent agent-message is delivered directly once without relaying the parent turn', async (t) => {
+  const wake = event('agent/inbox/spliced', 5, {
+    inserted: [{
+      content: [{ type: 'text', text: 'Agent child sent a message: ' }, { type: 'text', text: 'settled result' }],
+      source: { kind: 'agent-message' },
+    }],
+  });
+  const f = await fixture(t);
+  await f.coordinator.trackWake({ key: 'chat', sessionId: 'session', target: { chatId: 'destination' },
+    afterSeq: wake.seq, directText: 'Agent child sent a message: settled result' });
+  await f.coordinator.onEvent({ sessionId: 'session', event: wake });
+  await f.coordinator.whenIdle();
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent[0].outcome.text, 'Agent child sent a message: settled result');
+  await f.coordinator.onEvent({ sessionId: 'session', event: wake });
+  assert.equal(f.sent.length, 1);
+});
+
 test('history lag recovers without another event and does not consume send attempts', async (t) => {
   let reads = 0;
   const f = await fixture(t, { harness: { rpc: async () => {

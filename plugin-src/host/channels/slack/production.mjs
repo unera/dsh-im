@@ -109,6 +109,7 @@ export async function createProductionController(ctx, config = {}, internals = {
         initialAccessPolicy: initialAccessPolicyFor('slack', botConfig),
       });
       const workspaceScope = createBotWorkspaceScope(harness, {
+        dsBot: config.deliveryService?.dsBot,
         botId, workspaces, state, agentPresetCatalog,
       });
       return new ResolvedRuntime({
@@ -162,7 +163,7 @@ export async function createProductionController(ctx, config = {}, internals = {
   }).start();
   return {
     controller,
-    deliveryAdapter: createDeliveryAdapter({
+    deliveryAdapter: createDeliveryAdapter({ dsBot: config.deliveryService?.dsBot,
       channel: 'slack', workspaces, coreController, stateFor,
     }),
     ready: supervisor.ready,

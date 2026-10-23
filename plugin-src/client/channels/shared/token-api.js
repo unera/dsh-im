@@ -6,6 +6,12 @@ import { normalizeModelCatalog, normalizeModelSelection, SET_MODEL_ENDPOINT } fr
 import { normalizeLastMessageError } from '../../last-message-error.js';
 import { normalizeAccessPolicy } from '../../../../src/channels/shared/access-policy.mjs';
 import { normalizeContextEnhancementConfig } from '../../../../src/channels/shared/context-enhancement.mjs';
+import { normalizeSendLimitPerMinute, SET_SEND_LIMIT_ENDPOINT } from '../../../../src/channels/shared/send-limit.mjs';
+import {
+  normalizeThinkingIntervalSeconds,
+  normalizeThinkingNumbering,
+  SET_THINKING_CADENCE_ENDPOINT,
+} from '../../../../src/channels/shared/thinking-cadence.mjs';
 
 const ACCOUNT_STATES = new Set(['connected', 'connecting', 'offline', 'error']);
 
@@ -41,6 +47,8 @@ export const TOKEN_BOT_ENDPOINTS = Object.freeze({
   setAccessPolicy: 'bot.access-policy.set',
   setAlias: 'bot.alias.set',
   setThinkingTraces: 'bot.thinking-traces.set',
+  setSendLimit: SET_SEND_LIMIT_ENDPOINT,
+  setThinkingCadence: SET_THINKING_CADENCE_ENDPOINT,
 });
 
 export function createTokenChannelApi(channel, connectionSummary, {
@@ -74,6 +82,11 @@ export function createTokenChannelApi(channel, connectionSummary, {
       busyMessageMode: normalizeBusyMessageMode(value.busyMessageMode),      contextEnhancement: normalizeContextEnhancementConfig(value.contextEnhancement),
       // Absent from the backend means ON; only an explicit false opts out.
       thinkingTraces: value.thinkingTraces !== false,
+      // Absent or unusable falls back to the same default the backend applies.
+      sendLimitPerMinute: normalizeSendLimitPerMinute(value.sendLimitPerMinute),
+      // Absent or unusable falls back to the same defaults the backend applies.
+      thinkingNumbering: normalizeThinkingNumbering(value.thinkingNumbering),
+      thinkingIntervalSeconds: normalizeThinkingIntervalSeconds(value.thinkingIntervalSeconds),
       ...(Object.hasOwn(value, 'accessPolicy')
         ? { accessPolicy: normalizeAccessPolicy(value.accessPolicy) }
         : {}),

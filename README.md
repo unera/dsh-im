@@ -49,6 +49,29 @@
 >
 > 本项目由社区开发者独立开发与维护。
 
+<!-- -->
+
+> [!IMPORTANT]
+> **安装请认准完整包名：`@xmanrui/dsh-im`**
+>
+> 为避免名称混淆，在插件市场搜索、插件安装框中填写或使用命令安装时，请复制下方完整包名。
+>
+> ```text
+> @xmanrui/dsh-im
+> ```
+>
+> 选择对应的一条命令：**Desktop** 在内置终端执行，**Web** 在启动当前 Harness 的终端执行。
+>
+> ```sh
+> dsh plugin --profile desktop add -w @xmanrui/dsh-im
+> ```
+>
+> ```sh
+> dsh plugin --profile web add -w @xmanrui/dsh-im
+> ```
+>
+> 安装后重启 Desktop 或 `dsh web`，Web 刷新浏览器，再打开「设置 → IM机器人」。
+
 ## 简介
 
 通过扫码、App Manifest 或已有机器人凭据把 IM 机器人接入 DeepSeek Harness，并让本机 Harness 主动连接公网 AI Office。一个插件、一个设置入口，统一管理内置 IM 渠道和 AI Office Connector。**每个 IM 渠道都支持接入多个机器人**，各机器人的连接状态、工作区、模型和会话绑定彼此独立；iMessage 是本机 Messages.app 身份接入的例外，详见[iMessage 渠道说明](docs/imessage.md)。
@@ -131,13 +154,25 @@ WhatsApp、飞书、Telegram、Discord、Slack、QQ 支持自动保存实际收�
 
 ## 安装
 
-推荐从 npm 安装已发布的稳定版本：
+推荐从 npm 安装已发布的稳定版本 **`@xmanrui/dsh-im`**。请按实际使用的运行方式选择对应命令：
+
+**DSH Desktop**：在当前 Desktop 的内置终端中执行：
+
+```sh
+dsh plugin --profile desktop add -w @xmanrui/dsh-im
+```
+
+安装完成后重启 DSH Desktop。
+
+**DSH Web**：在启动当前 Harness 的终端环境中执行：
 
 ```sh
 dsh plugin --profile web add -w @xmanrui/dsh-im
 ```
 
-重启 `dsh web`、刷新浏览器，然后打开「设置 → IM机器人」。IM机器人使用 `order: 21`，尽量排在一级设置菜单的「Agent 预设」之后；插件页面不再保留旧入口。从旧版升级不会改变已有机器人、凭据、工作区、Agent Preset 或会话绑定。
+安装完成后重启 `dsh web`，并刷新浏览器。
+
+重启后打开「设置 → IM机器人」。IM机器人使用 `order: 21`，尽量排在一级设置菜单的「Agent 预设」之后；插件页面不再保留旧入口。从旧版升级不会改变已有机器人、凭据、工作区、Agent Preset 或会话绑定。
 
 本机 `dsh web` 和 DSH Desktop 默认直接复用当前 Host 的内部服务：通过 Typert Gateway 调用 Session Controller 和 Workspace Controller，不需要配置 Harness 地址，也不绕行本机 HTTP 端口。Desktop 的兼容模式、扩展窗口和增强模式均无需开启“允许在浏览器中打开”或局域网访问。渠道配置中显式设置的 `harnessBaseUrl` 仅保留给旧版远程 HTTP/WebSocket Harness；内部调用失败不会自动改连其他 Host。
 
@@ -464,12 +499,15 @@ dsh web --trusted-host dsh.example.com
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/trae-agent" title="trae-agent"><img src="https://avatars.githubusercontent.com/u/220387035?s=80" width="80" alt="Trae"/><br /><sub><b>Trae</b></sub></a><br /><a href="https://github.com/xmanrui/dsh-im/commit/ed47ae7db87d08a12fc6412083ece05669372929" title="Documentation">📖</a></td>
     </tr>
     <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/unera" title="unera"><img src="https://avatars.githubusercontent.com/u/538980?s=80" width="80" alt="Dmitry E. Oboukhov"/><br /><sub><b>Dmitry E. Oboukhov</b></sub></a><br /><a href="https://github.com/xmanrui/dsh-im/pull/414" title="Code">💻</a> <a href="https://github.com/xmanrui/dsh-im/pull/414" title="Tests">⚠️</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/WE-Technology" title="WE-Technology"><img src="https://avatars.githubusercontent.com/u/109900108?s=80" width="80" alt="WE-Technology"/><br /><sub><b>WE-Technology</b></sub></a><br /><a href="https://github.com/xmanrui/dsh-im/commit/b0606159e01bbb0a171323e52578324b5faea97a" title="Code">💻</a> <a href="https://github.com/xmanrui/dsh-im/commit/b0606159e01bbb0a171323e52578324b5faea97a" title="Documentation">📖</a> <a href="https://github.com/xmanrui/dsh-im/commit/b0606159e01bbb0a171323e52578324b5faea97a" title="Tests">⚠️</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/wings1848" title="wings1848"><img src="https://avatars.githubusercontent.com/u/120104016?s=80" width="80" alt="Wings Butterfly"/><br /><sub><b>Wings Butterfly</b></sub></a><br /><a href="https://github.com/xmanrui/dsh-im/pull/206" title="Code">💻</a> <a href="https://github.com/xmanrui/dsh-im/pull/206" title="Documentation">📖</a> <a href="https://github.com/xmanrui/dsh-im/pull/206" title="Tests">⚠️</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/xmanrui" title="xmanrui"><img src="https://avatars.githubusercontent.com/u/4094054?s=80" width="80" alt="xiemanR"/><br /><sub><b>xiemanR</b></sub></a><br /><a href="https://github.com/xmanrui/dsh-im/commit/b8bd681a793a87ff2a7b8d282cb4944a0ce769c3" title="Code">💻</a> <a href="https://github.com/xmanrui/dsh-im/commit/b8bd681a793a87ff2a7b8d282cb4944a0ce769c3" title="Documentation">📖</a> <a href="https://github.com/xmanrui/dsh-im/commit/b8bd681a793a87ff2a7b8d282cb4944a0ce769c3" title="Tests">⚠️</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/yangzhe1991" title="yangzhe1991"><img src="https://avatars.githubusercontent.com/u/860739?s=80" width="80" alt="Zhe (Phil) Yang"/><br /><sub><b>Zhe (Phil) Yang</b></sub></a><br /><a href="https://github.com/xmanrui/dsh-im/commits/main/?author=yangzhe1991" title="Code">💻</a> <a href="https://github.com/xmanrui/dsh-im/commits/main/?author=yangzhe1991" title="Documentation">📖</a> <a href="https://github.com/xmanrui/dsh-im/commits/main/?author=yangzhe1991" title="Tests">⚠️</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/yhay81" title="yhay81"><img src="https://avatars.githubusercontent.com/u/11132792?s=80" width="80" alt="Yusuke Hayashi"/><br /><sub><b>Yusuke Hayashi</b></sub></a><br /><a href="https://github.com/xmanrui/dsh-im/commit/91f49a603b504762fc0c5daf50d4385bf604ce93" title="Code">💻</a> <a href="https://github.com/xmanrui/dsh-im/commit/91f49a603b504762fc0c5daf50d4385bf604ce93" title="Documentation">📖</a> <a href="https://github.com/xmanrui/dsh-im/commit/91f49a603b504762fc0c5daf50d4385bf604ce93" title="Tests">⚠️</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/yzxxy010" title="yzxxy010"><img src="https://avatars.githubusercontent.com/u/98270201?s=80" width="80" alt="星曜"/><br /><sub><b>星曜</b></sub></a><br /><a href="https://github.com/xmanrui/dsh-im/commit/7a68e94f547a2412e602772dfef82af779750b5f" title="Code">💻</a> <a href="https://github.com/xmanrui/dsh-im/commit/f27c0c3018a4c26c6d29885ba0cf2b44be947a4f" title="Documentation">📖</a> <a href="https://github.com/xmanrui/dsh-im/commit/7a68e94f547a2412e602772dfef82af779750b5f" title="Tests">⚠️</a></td>
+    </tr>
+    <tr>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/zaakirio" title="zaakirio"><img src="https://avatars.githubusercontent.com/u/90780598?s=80" width="80" alt="zaakir"/><br /><sub><b>zaakir</b></sub></a><br /><a href="https://github.com/xmanrui/dsh-im/commit/dcd7cd64d80bd246e5e85912a7ee62a2d4572c05" title="Code">💻</a> <a href="https://github.com/xmanrui/dsh-im/commit/dcd7cd64d80bd246e5e85912a7ee62a2d4572c05" title="Documentation">📖</a> <a href="https://github.com/xmanrui/dsh-im/commit/dcd7cd64d80bd246e5e85912a7ee62a2d4572c05" title="Tests">⚠️</a> <a href="https://github.com/xmanrui/dsh-im/commit/dcd7cd64d80bd246e5e85912a7ee62a2d4572c05" title="Translation">🌍</a></td>
     </tr>
   </tbody>

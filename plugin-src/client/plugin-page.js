@@ -13,11 +13,9 @@ function OpenImAction({ subject, packageName, onOpen, t }) {
   }, t('打开 IM机器人'));
 }
 
-function ImPluginPage({ renderPanel, onBack, t }) {
+function ImPluginPage({ renderPanel }) {
   return h('div', { className: 'dim-pluginPage' },
     h('div', { className: 'dim-pluginPageContent' },
-      h('button', { type: 'button', className: 'dim-pluginBack', onClick: onBack },
-        h('span', { 'aria-hidden': true }, '‹'), t('返回插件详情')),
       renderPanel()));
 }
 
@@ -47,14 +45,11 @@ export function installImPluginPage(ctx, { packageName, renderPanel, sidebarVisi
     },
   };
   if (typeof ctx.inject !== 'function') return controller;
-  ctx.inject(['layout', 'pluginNavigation'], (pageCtx) =>
+  ctx.inject(['layout'], (pageCtx) =>
     pageCtx.slots.inject('main', () => {
       const unregisterPage = pageCtx.slots.register({
         name: 'main', key: IM_MAIN_PANEL_ID, locale: IM_LOCALE_NAMESPACE,
-        inject: () => ({
-          renderPanel,
-          onBack: () => pageCtx.pluginNavigation.openBundle(packageName),
-        }),
+        inject: () => ({ renderPanel }),
       }, ImPluginPage);
       let stopSidebar = null;
       const update = () => {

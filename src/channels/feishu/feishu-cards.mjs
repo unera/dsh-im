@@ -1292,8 +1292,8 @@ export function splitStepStreamCardBlocks(
 }
 
 /**
- * Interactive question card. When the question carries options, each option is
- * rendered as its own button; the selected option label is submitted via a
+ * Interactive question card. Each option is shown in wrapping body text with
+ * a short numbered button; the selected option label is submitted via a
  * card callback. Multi-select questions fall back to the plain-text flow (the
  * caller decides), because a multi-select needs a confirm step.
  * A resolvedText replaces the buttons when an image ends the question flow.
@@ -1314,18 +1314,22 @@ export function questionCard({ interactionId, header, question, detail, options,
 
   if (Array.isArray(options) && options.length > 0) {
     elements.push({ tag: 'hr' });
-    for (const option of options) {
+    for (const [optionIndex, option] of options.entries()) {
       const label = typeof option?.label === 'string' ? option.label : '';
       if (!label) continue;
       const description = typeof option?.description === 'string' && option.description.trim()
         ? option.description.trim()
         : '';
-      // Include the option description in the button so the user sees the full
-      // meaning (mirrors the text form "1. label — description").
-      const buttonText = description ? `${label}\n${description}` : label;
+      // Long button labels are clipped by Feishu. Keep the complete option in
+      // non-interactive body text, numbered like the text-reply fallback.
+      const number = optionIndex + 1;
+      elements.push({
+        tag: 'div',
+        text: plainText(`${number}. ${label}${description ? `\n${description}` : ''}`),
+      });
       // Action carries the question index so a stale card from a previous
       // question cannot be applied to the current one: answer:<interactionId>:<index>:<label>
-      elements.push(button(buttonText, `answer:${interactionId}:${index}:${label}`));
+      elements.push(button(t('选择 {number}', { number }), `answer:${interactionId}:${index}:${label}`));
     }
     // issue #162：自定义答案入口与 menuCard/steerCard 的「✏️ 更多 / 自定义…」
     // 对齐——文字流本就支持 custom 答案，卡片补上引导入口。

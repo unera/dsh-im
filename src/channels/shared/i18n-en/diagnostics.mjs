@@ -1,4 +1,9 @@
 export default Object.freeze({
+  '异常类型': 'Exception types',
+  '二维码编码器': 'QR encoder',
+  '二维码图片格式': 'QR image format',
+  '本机二维码图片生成失败，请重试；若持续失败，请复制诊断信息并检查 DSH 运行环境。':
+    'The QR-code image could not be generated locally. Retry; if it keeps failing, copy the diagnostics and check the DSH runtime environment.',
   '准备会话': 'Prepare session',
   '准备消息': 'Prepare message',
   '建立交互通道': 'Open interaction channel',

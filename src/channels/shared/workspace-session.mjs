@@ -119,10 +119,14 @@ export async function askInWorkspaceSession({
     try {
       const binding = await withSessionBindingLock(state, key, async () => {
         await awaitPendingConversationSwitch(harness, key);
-        let sessionId = state.sessionFor(key);
+        const dsBotSessionId = await harness.resolveDsBotSession?.(key);
+        let sessionId = dsBotSessionId || state.sessionFor(key);
         diagnostic.sessionId = sessionId;
         let session = sessionId ? workspaceSession(harness, sessionId, key) : null;
         if (!session || !(await sessionExists(session, existsOptions))) {
+          if (dsBotSessionId) {
+            throw Object.assign(new Error('DS Bot 的当前会话不可用。'), { code: 'ds-bot-unavailable' });
+          }
           sessionId = await createSession(harness, {
             conversationKey: key,
             ...(createOptions ?? {}),

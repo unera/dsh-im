@@ -75,7 +75,7 @@ const FAILURE_MESSAGES = Object.freeze({
   SESSION_NOT_FOUND:
     '当前会话已不存在。请发送 /new 创建新会话后重试。',
   SESSION_ARCHIVED:
-    '当前会话已归档，无法继续处理。请在 DSH 中取消归档，或发送 /new 创建新会话。',
+    '当前会话已归档，无法继续处理。有命令权限时可发送 /new 创建新会话；否则请联系管理员在 DSH 中取消归档，或为你开启命令权限。',
   SESSION_BUSY:
     '当前会话仍在处理上一项任务。请等待完成，或发送 /stop 后重试。',
   SESSION_STALE:

@@ -5,6 +5,7 @@ import { normalizeBotAlias } from '../../../../src/channels/shared/bot-alias.mjs
 import { SET_ALIAS_ENDPOINT, validAliasPayload } from '../shared/bot-alias-rpc.mjs';
 import { registerManagementRpc } from '../../../management-rpc.mjs';
 import QRCode from 'qrcode';
+import { qrEncodingError } from '../../../../src/channels/shared/qr-encoding-error.mjs';
 import {
   normalizeAgentPresetCatalog,
   normalizeAgentPresetId,
@@ -613,7 +614,10 @@ export function createFeishuRpcHandler(controller, { encodeQr = qrCodeDataUrl } 
     let encoded = qrCache.get(url);
     if (!encoded) {
       if (qrCache.size >= 32) qrCache.delete(qrCache.keys().next().value);
-      encoded = Promise.resolve().then(() => encodeQr(url));
+      encoded = Promise.resolve().then(() => encodeQr(url)).catch(error => {
+        if (qrCache.get(url) === encoded) qrCache.delete(url);
+        throw qrEncodingError(error);
+      });
       qrCache.set(url, encoded);
     }
     return encoded;

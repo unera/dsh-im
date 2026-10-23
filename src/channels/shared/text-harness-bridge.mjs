@@ -211,6 +211,9 @@ export class TextHarnessBridge {
   // auto-steer lane; and the open coalescing windows awaiting their flush.
   #turnAuthors = new Map();
   #coalescing = new Map();
+  // Session targets are retained after ask() so a later subagent settlement
+  // wake-up can be routed only to the IM conversation that owns the session.
+  #sessionTargets = new Map();
   #autoSteerSameSender = false;
   #autoSteerLimit = 0;
   #coalesceWindowMs = 0;
@@ -269,6 +272,7 @@ export class TextHarnessBridge {
     this.#contextHooks = contextHooks && typeof contextHooks === 'object' ? contextHooks : null;
     this.#deferred = createDeferredDeliveryCoordinator({ harness, state, signal, logger,
       deliver: (entry, outcome) => this.#deliverDeferredOutcome(entry, outcome),
+      onWake: (payload) => this.#trackSubagentWake(payload),
     });
     this.#approvals = new HarnessApprovalQueue({
       label: descriptor.key,
@@ -915,8 +919,27 @@ export class TextHarnessBridge {
     }
   }
 
+  async #trackSubagentWake({ sessionId, event, coordinator } = {}) {
+    const inserted = Array.isArray(event?.data?.inserted) ? event.data.inserted : [];
+    const report = inserted.find((message) => message?.source?.kind === 'agent-message');
+    if (!report) return;
+    const text = (Array.isArray(report.content) ? report.content : [])
+      .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+      .map((part) => part.text)
+      .join('')
+      .trim();
+    if (!text) return;
+    const target = this.#sessionTargets.get(sessionId);
+    if (!target || this.#state.sessionFor(target.key) !== sessionId) return;
+    await coordinator.trackWake({ key: target.key, sessionId, afterSeq: event.seq,
+      target: target.target, directText: text });
+  }
+
   async #deliverDeferredOutcome(entry, outcome) {
     const text = deferredOutcomeText(outcome);
+    if (entry.directText && typeof this.#bot.sendText === 'function') {
+      return this.#bot.sendText(entry.target, text);
+    }
     return typeof this.#bot.sendDelivery === 'function'
       ? this.#bot.sendDelivery(entry.target, createTextDeliveryBlock(text, outcome.found ? 'markdown' : 'plain'))
       : this.#bot.sendText(entry.target, text);
@@ -1308,6 +1331,10 @@ export class TextHarnessBridge {
               return;
             }
             if (update.type === 'reasoning') return;
+            // A carrier that delivers the answer as its own message must not
+            // stream that answer into itself first: the reader would see the
+            // reply twice, and every preview costs an edit.
+            if (update.type === 'text' && stream.previewAnswer === false) return;
             const progress = update.type === 'text' ? update.text
               : update.type === 'tool' ? t('正在使用{name}…', { name: update.name }) : update.text;
             if (progress) {
@@ -1333,6 +1360,10 @@ export class TextHarnessBridge {
           files: message.files,
           images: message.images,
         },
+      });
+      this.#sessionTargets.set(sessionId, {
+        key: conversationKey,
+        target: this.#descriptor.key === 'whatsapp' ? { jid: target.jid, selfChat: target.selfChat } : target,
       });
       stopKeepalive();
       if (batchSubmission) {

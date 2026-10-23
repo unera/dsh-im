@@ -19,6 +19,10 @@ const REASONS = new Set([
   'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN',
   'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'ERR_TLS_CERT_ALTNAME_INVALID', 'ERR_SSL_WRONG_VERSION_NUMBER',
   'ENOENT', 'EACCES', 'EPERM', 'ENOSPC', 'EROFS', 'ENOTDIR', 'EISDIR', 'EBUSY', 'EIO', 'EXDEV', 'EMFILE', 'ENFILE', 'EEXIST',
+  'ERR_INVALID_ARG_TYPE', 'ERR_INVALID_ARG_VALUE', 'ERR_OUT_OF_RANGE', 'ERR_BUFFER_OUT_OF_BOUNDS',
+  'ERR_ZLIB_INITIALIZATION_FAILED', 'ERR_STREAM_DESTROYED', 'ERR_STREAM_PREMATURE_CLOSE',
+  'Z_STREAM_ERROR', 'Z_DATA_ERROR', 'Z_MEM_ERROR', 'Z_BUF_ERROR', 'Z_VERSION_ERROR',
+  'MODULE_NOT_FOUND', 'ERR_MODULE_NOT_FOUND',
   'unknown', 'multiple-causes', 'timeout', 'http-error', 'provider-rejected', 'invalid-response', 'ERR_PROXY_CONNECTION_FAILED', 'ERR_TLS_HANDSHAKE_TIMEOUT', 'ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR', 'ERR_NETWORK_ACCESS_DENIED', 'AUTHENTICATIONFAILED', 'EAUTH', 'invalid-json', 'invalid-config', 'read-only',
 ]);
 const RESOURCES = new Set(['credential-store', 'account-config', 'account-state', 'workspace-config', 'workspace-directory']);
@@ -30,6 +34,10 @@ const RPC_METHODS = new Set([
 const TRANSPORTS = new Set(['host-api', 'http', 'websocket']);
 const SUBMISSION_STATES = new Set(['not-submitted', 'accepted', 'unknown']);
 const CONFIG_FILES = new Set(['config.json', 'workspaces.json']);
+export const DIAGNOSTIC_ERROR_TYPES = new Set([
+  'Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'AggregateError',
+  'DOMException', 'AxiosError', 'TimeoutError', 'AbortError',
+]);
 export const CONFIG_ISSUE_LABELS = Object.freeze({
   'expected-object': '应为 JSON 对象。',
   'expected-array': '应为 JSON 数组。',
@@ -57,6 +65,12 @@ export function normalizeDiagnosticDetails(value) {
     if (allowed.has(value[field])) result[field] = value[field];
   }
   if (DIAGNOSTIC_CHANNELS.includes(value.channel)) result.channel = value.channel;
+  if (Array.isArray(value.errorTypes)) {
+    const errorTypes = [...new Set(value.errorTypes.filter(type => DIAGNOSTIC_ERROR_TYPES.has(type)))];
+    if (errorTypes.length) result.errorTypes = errorTypes;
+  }
+  if (value.qrEncoder === 'qrcode') result.qrEncoder = value.qrEncoder;
+  if (value.qrRenderer === 'png') result.qrRenderer = value.qrRenderer;
   if (Array.isArray(value.reasons)) {
     const reasons = [...new Set(value.reasons.filter(v => REASONS.has(v) && !['unknown', 'multiple-causes'].includes(v)))].slice(0, 16);
     if (reasons.length) result.reasons = reasons;
@@ -68,7 +82,7 @@ export function normalizeDiagnosticDetails(value) {
   if (['ilinkai.weixin.qq.com', 'oapi.dingtalk.com', 'api.dingtalk.com', 'api.telegram.org', 'discord.com', 'slack.com', 'open.feishu.cn', 'qyapi.weixin.qq.com'].includes(value.host)) result.host = value.host;
   if (value.dependencies && typeof value.dependencies === 'object') {
     const dependencies = {};
-    for (const name of ['dingtalkStream', 'axios', 'httpsProxyAgent', 'agentBase']) {
+    for (const name of ['dingtalkStream', 'axios', 'httpsProxyAgent', 'agentBase', 'qrcode', 'pngjs', 'zlib']) {
       const version = value.dependencies[name];
       if (typeof version === 'string' && /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/.test(version) && version.length <= 80) dependencies[name] = version;
     }

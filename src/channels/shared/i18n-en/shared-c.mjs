@@ -77,6 +77,7 @@ export default {
   '机器人端无法处理这次审批，请到 Web 查看。': 'The bot cannot handle this approval. Please check the Web interface.',
   '未找到可处理端，本次操作未获批准。': 'No approval interface is available. This operation was not approved.',
   '有操作在等待审批：{tool}，请到 Web 处理。': 'An operation is awaiting approval: {tool}. Please handle it in the Web interface.',
+  '本会话有问题等待回答，请在桌面端回答。': 'This session has a pending question. Please answer it in the desktop app.',
   '无法完整展示这次操作，已安全拒绝此次审批。':
     'The operation could not be displayed in full, so this approval was safely rejected.',
   '审批提交失败，请重新回复「批准」或「拒绝」。':
@@ -205,6 +206,6 @@ export default {
     'Collected {count}/{limit} messages. The batch is full; send /send or /cancel.',
   '批量内容提交失败，已保留 {count} 条消息。\n请再次发送 /send 重试或 /cancel 取消。':
     'Batch submission failed; {count} messages were retained.\nSend /send to retry or /cancel to cancel.',
-  '你可以发送普通消息，但没有执行命令的权限。':
-    'You can send regular messages, but you do not have permission to run commands.',
+  '你可以发送普通消息，但没有执行命令的权限。请联系管理员在 DSH 设置 → IM机器人 → 对应机器人 → 访问设置中，为你开启当前私聊或群聊场景的命令权限后重试。':
+    'You can send regular messages, but you do not have permission to run commands. Ask an administrator to grant you command permission for the current direct or group chat under DSH Settings → IM Bots → the relevant bot → Access Settings, then try again.',
 };

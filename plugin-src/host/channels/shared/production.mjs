@@ -135,6 +135,11 @@ export async function createTokenProductionController(ctx, config, internals, de
   const coreController = new ResolvedController({
     credentials: ctx.credentials,
     configStore: observedConfigStore,
+    // Channel settings scoped per chat need the archived group list (titles and
+    // real chat IDs) to offer something better than a blank form.
+    ...(definitions.controllerGroupHistory ? {
+      groupHistory: internals.groupHistory ?? getGroupHistoryStore(ctx, config),
+    } : {}),
     logger,
     ...(internals.inspectToken ? { inspectToken: internals.inspectToken } : {}),
     // Optional per-channel hook: a channel whose own settings also express an
@@ -162,6 +167,7 @@ export async function createTokenProductionController(ctx, config, internals, de
       const state = await stateFor(botId);
       await ensureWorkspace(botId, botConfig);
       const workspaceScope = createBotWorkspaceScope(harness, {
+        dsBot: config.deliveryService?.dsBot,
         botId, workspaces, state, agentPresetCatalog,
       });
       const persistTokens = typeof definitions.persistBotCredential === 'function'
@@ -183,6 +189,11 @@ export async function createTokenProductionController(ctx, config, internals, de
         harness: workspaceScope.harness,
         state: workspaceScope.state,
         groupHistory: internals.groupHistory ?? (['telegram', 'discord'].includes(channel) ? getGroupHistoryStore(ctx, config) : undefined),
+        // A transport that carries voice notes composes its own transcriber
+        // from Host services; without one voice messages stay textless.
+        ...(typeof definitions.createVoiceTranscriber === 'function'
+          ? { voice: definitions.createVoiceTranscriber(ctx, config, internals) }
+          : {}),
         contextEnhancement: { botId, getSettings: () => workspaces.contextEnhancementFor(botId) },
         accessPolicy: accessPolicyProvider(workspaces, botId, { channel, config: botConfig }),
         replyTimeoutMs: config.replyTimeoutMs ?? 600_000,
@@ -227,7 +238,7 @@ export async function createTokenProductionController(ctx, config, internals, de
   return {
     controller,
     ...(supportsDeliveryChannel(channel) ? {
-      deliveryAdapter: createDeliveryAdapter({ channel, workspaces, coreController, stateFor }),
+      deliveryAdapter: createDeliveryAdapter({ dsBot: config.deliveryService?.dsBot, channel, workspaces, coreController, stateFor }),
     } : {}),
     ready: supervisor.ready,
     async close() {

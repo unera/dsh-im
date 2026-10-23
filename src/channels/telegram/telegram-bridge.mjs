@@ -5,7 +5,10 @@ export const TELEGRAM_DESCRIPTOR = Object.freeze({
   key: 'telegram',
   label: 'Telegram',
   connectionLabel: ' Bot API 长轮询',
-  reactions: Object.freeze({ processing: '👀', success: '👍', error: '👎' }),
+  // A finished turn leaves no reaction behind: Telegram keeps offering reaction
+  // controls on a message that carries one, which repeats for the reader even
+  // with reaction notifications off. A failure still keeps its mark.
+  reactions: Object.freeze({ processing: '👀', success: null, error: '👎' }),
 });
 
 /** One keyboard row per option; beyond this the list stops being scannable. */

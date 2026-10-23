@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { registerManagementRpc } from '../management-rpc.mjs';
 
 import { PluginConfigStore } from '../../src/channels/feishu/plugin-config-store.mjs';
 import { WeixinConfigStore } from '../../src/channels/weixin/config-store.mjs';
@@ -18,6 +19,7 @@ import { EmailConfigStore } from '../../src/channels/email/config-store.mjs';
 import { MatrixConfigStore } from '../../src/channels/matrix/matrix-config-store.mjs';
 import { OfficeConfigStore } from '../../src/channels/office/config-store.mjs';
 
+export const SIDEBAR_SETTINGS_RPC_CHANNEL = '/dsh-im-sidebar';
 export const SIDEBAR_SETTINGS_ENDPOINTS = Object.freeze({
   get: 'settings.sidebar-entry.get', set: 'settings.sidebar-entry.set',
 });
@@ -101,4 +103,11 @@ export function createSidebarSettingsRpcHandler({ config = {}, store, configured
       return { ok: false, error: { code: 'sidebar-settings-unavailable', message: '无法读取或保存侧边栏设置，请稍后重试。' } };
     }
   };
+}
+
+export function installSidebarSettingsRpc(ctx, { config = {} } = {}) {
+  // Visibility follows ordinary channel management authority. Keep it separate
+  // from the general settings route, whose TTL operations remain loopback-only.
+  return registerManagementRpc(ctx, SIDEBAR_SETTINGS_RPC_CHANNEL,
+    createSidebarSettingsRpcHandler({ config }), { authority: config.rpcAuthority });
 }
