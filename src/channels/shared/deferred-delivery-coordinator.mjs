@@ -26,6 +26,7 @@ export function createDeferredDeliveryCoordinator({
   harness, state, deliver, signal, logger = console,
   retryDelayMs = 1_000, pollDelayMs = 30_000, watch = true,
   finalAnswerOnly = false,
+  onWake = null,
 } = {}) {
   const enabled = ['deferredEntries', 'putDeferred', 'patchDeferred', 'removeDeferred']
     .every((name) => typeof state?.[name] === 'function');
@@ -205,6 +206,14 @@ export function createDeferredDeliveryCoordinator({
     timers.clear();
   }, { once: true });
   const api = {
+    async trackWake({ key, sessionId, afterSeq, target, ...delivery } = {}) {
+      if (!enabled || activeSignal.aborted || typeof key !== 'string' || !key
+        || typeof sessionId !== 'string' || !sessionId || !Number.isSafeInteger(afterSeq)) return;
+      if (state.sessionFor(key) !== sessionId) return;
+      const entry = await registry.register({ key, sessionId, turn: null,
+        afterSeq, ...delivery, target });
+      void enqueue(sessionId, () => process(entry.id, { urgent: true })).catch(warn);
+    },
     async trackTimeout(error, { key, sessionId, ...delivery }) {
       if (!enabled || error?.code !== 'harness-reply-timeout' || activeSignal.aborted) return;
       const details = error.details ?? {};
@@ -218,7 +227,12 @@ export function createDeferredDeliveryCoordinator({
       void enqueue(target, () => process(entry.id)).catch(warn);
     },
     async onEvent({ sessionId, event } = {}) {
-      if (!enabled || activeSignal.aborted || event?.type !== 'turn/end') return;
+      if (!enabled || activeSignal.aborted || typeof sessionId !== 'string' || !event) return;
+      if (event.type === 'agent/inbox/spliced') {
+        await onWake?.({ sessionId, event, coordinator: api });
+        return;
+      }
+      if (event.type !== 'turn/end') return;
       const entries = await registry.pendingForSession(sessionId);
       await Promise.allSettled(entries
         .filter((entry) => !Number.isSafeInteger(entry.turn) || entry.turn === event.data?.turn)

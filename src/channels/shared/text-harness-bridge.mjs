@@ -211,6 +211,9 @@ export class TextHarnessBridge {
   // auto-steer lane; and the open coalescing windows awaiting their flush.
   #turnAuthors = new Map();
   #coalescing = new Map();
+  // Session targets are retained after ask() so a later subagent settlement
+  // wake-up can be routed only to the IM conversation that owns the session.
+  #sessionTargets = new Map();
   #autoSteerSameSender = false;
   #autoSteerLimit = 0;
   #coalesceWindowMs = 0;
@@ -269,6 +272,7 @@ export class TextHarnessBridge {
     this.#contextHooks = contextHooks && typeof contextHooks === 'object' ? contextHooks : null;
     this.#deferred = createDeferredDeliveryCoordinator({ harness, state, signal, logger,
       deliver: (entry, outcome) => this.#deliverDeferredOutcome(entry, outcome),
+      onWake: (payload) => this.#trackSubagentWake(payload),
     });
     this.#approvals = new HarnessApprovalQueue({
       label: descriptor.key,
@@ -915,6 +919,14 @@ export class TextHarnessBridge {
     }
   }
 
+  async #trackSubagentWake({ sessionId, event, coordinator } = {}) {
+    const inserted = Array.isArray(event?.data?.inserted) ? event.data.inserted : [];
+    if (!inserted.some((message) => message?.source?.kind === 'subagent-settled')) return;
+    const target = this.#sessionTargets.get(sessionId);
+    if (!target || this.#state.sessionFor(target.key) !== sessionId) return;
+    await coordinator.trackWake({ key: target.key, sessionId, afterSeq: event.seq, target: target.target });
+  }
+
   async #deliverDeferredOutcome(entry, outcome) {
     const text = deferredOutcomeText(outcome);
     return typeof this.#bot.sendDelivery === 'function'
@@ -1337,6 +1349,10 @@ export class TextHarnessBridge {
           files: message.files,
           images: message.images,
         },
+      });
+      this.#sessionTargets.set(sessionId, {
+        key: conversationKey,
+        target: this.#descriptor.key === 'whatsapp' ? { jid: target.jid, selfChat: target.selfChat } : target,
       });
       stopKeepalive();
       if (batchSubmission) {

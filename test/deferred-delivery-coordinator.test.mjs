@@ -50,6 +50,27 @@ test('only reply timeouts are tracked; duplicate terminal events consume the row
   assert.deepEqual(f.state.deferredEntries(), []);
 });
 
+test('subagent settlement splice wakes and delivers the following completed turn once', async (t) => {
+  const followup = [
+    event('turn/start', 5, { turn: 4 }),
+    event('agent/inbox/spliced', 6, { inserted: [{ source: { kind: 'subagent-settled' } }] }),
+    event('assistant/message', 7, { turn: 4, step: 0, message: { content: [{ type: 'text', text: 'settled result' }] } }),
+    event('turn/end', 8, { turn: 4, reason: 'completed' }),
+  ];
+  const f = await fixture(t, { harness: { rpc: async () => ({ events: [...complete, ...followup], hasMore: false }) } });
+  await f.coordinator.trackWake({ key: 'chat', sessionId: 'session', target: { chatId: 'destination' }, afterSeq: 4 });
+  await f.coordinator.onEvent({ sessionId: 'session', event: event('agent/inbox/spliced', 4, {
+    inserted: [{ source: { kind: 'subagent-settled' } }],
+  }) });
+  await f.coordinator.whenIdle();
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent[0].outcome.text, 'settled result');
+  await f.coordinator.onEvent({ sessionId: 'session', event: event('agent/inbox/spliced', 4, {
+    inserted: [{ source: { kind: 'subagent-settled' } }],
+  }) });
+  assert.equal(f.sent.length, 1);
+});
+
 test('history lag recovers without another event and does not consume send attempts', async (t) => {
   let reads = 0;
   const f = await fixture(t, { harness: { rpc: async () => {
