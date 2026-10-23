@@ -921,10 +921,18 @@ export class TextHarnessBridge {
 
   async #trackSubagentWake({ sessionId, event, coordinator } = {}) {
     const inserted = Array.isArray(event?.data?.inserted) ? event.data.inserted : [];
-    if (!inserted.some((message) => message?.source?.kind === 'subagent-settled')) return;
+    const report = inserted.find((message) => message?.source?.kind === 'agent-message');
+    if (!report) return;
+    const text = (Array.isArray(report.content) ? report.content : [])
+      .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+      .map((part) => part.text)
+      .join('')
+      .trim();
+    if (!text) return;
     const target = this.#sessionTargets.get(sessionId);
     if (!target || this.#state.sessionFor(target.key) !== sessionId) return;
-    await coordinator.trackWake({ key: target.key, sessionId, afterSeq: event.seq, target: target.target });
+    await coordinator.trackWake({ key: target.key, sessionId, afterSeq: event.seq,
+      target: target.target, directText: text });
   }
 
   async #deliverDeferredOutcome(entry, outcome) {

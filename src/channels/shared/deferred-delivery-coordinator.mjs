@@ -68,6 +68,9 @@ export function createDeferredDeliveryCoordinator({
     await registry.remove(entry);
   }
   async function readOutcome(entry) {
+    if (typeof entry.directText === 'string' && entry.directText.trim()) {
+      return { found: true, endSeq: entry.afterSeq, turn: entry.turn, text: entry.directText.trim() };
+    }
     // A result may be older than the latest history page after a restart.
     // Recover the whole target turn instead of treating a missing page as empty.
     const events = new Map();
@@ -214,12 +217,13 @@ export function createDeferredDeliveryCoordinator({
     timers.clear();
   }, { once: true });
   const api = {
-    async trackWake({ key, sessionId, afterSeq, target, ...delivery } = {}) {
+    async trackWake({ key, sessionId, afterSeq, target, directText = null, ...delivery } = {}) {
       if (!enabled || activeSignal.aborted || typeof key !== 'string' || !key
         || typeof sessionId !== 'string' || !sessionId || !Number.isSafeInteger(afterSeq)) return;
       if (state.sessionFor(key) !== sessionId) return;
-      const entry = await registry.register({ key, sessionId, turn: null,
-        afterSeq, waitForNextTurn: true, ...delivery, target });
+      const direct = typeof directText === 'string' && directText.trim() ? directText.trim() : null;
+      const entry = await registry.register({ key, sessionId, turn: direct ? afterSeq : null,
+        afterSeq, waitForNextTurn: direct === null, directText: direct, ...delivery, target });
       void enqueue(sessionId, () => process(entry.id, { urgent: true })).catch(warn);
     },
     async trackTimeout(error, { key, sessionId, ...delivery }) {

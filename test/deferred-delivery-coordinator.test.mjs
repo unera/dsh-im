@@ -50,24 +50,21 @@ test('only reply timeouts are tracked; duplicate terminal events consume the row
   assert.deepEqual(f.state.deferredEntries(), []);
 });
 
-test('subagent settlement splice skips the active parent turn and delivers the next turn once', async (t) => {
-  const followup = [
-    event('agent/inbox/spliced', 5, { inserted: [{ source: { kind: 'subagent-settled' } }] }),
-    // The settlement can arrive while turn 3 is still active. Its closing
-    // answer must not be relayed as the subagent report.
-    event('assistant/message', 6, { turn: 3, step: 0, message: { content: [{ type: 'text', text: 'parent launch message' }] } }),
-    event('turn/end', 7, { turn: 3, reason: 'completed' }),
-    event('turn/start', 8, { turn: 4 }),
-    event('assistant/message', 9, { turn: 4, step: 0, message: { content: [{ type: 'text', text: 'settled result' }] } }),
-    event('turn/end', 10, { turn: 4, reason: 'completed' }),
-  ];
-  const f = await fixture(t, { harness: { rpc: async () => ({ events: [...complete, ...followup], hasMore: false }) } });
-  await f.coordinator.trackWake({ key: 'chat', sessionId: 'session', target: { chatId: 'destination' }, afterSeq: 5 });
-  await f.coordinator.onEvent({ sessionId: 'session', event: followup[0] });
+test('subagent agent-message is delivered directly once without relaying the parent turn', async (t) => {
+  const wake = event('agent/inbox/spliced', 5, {
+    inserted: [{
+      content: [{ type: 'text', text: 'Agent child sent a message: ' }, { type: 'text', text: 'settled result' }],
+      source: { kind: 'agent-message' },
+    }],
+  });
+  const f = await fixture(t);
+  await f.coordinator.trackWake({ key: 'chat', sessionId: 'session', target: { chatId: 'destination' },
+    afterSeq: wake.seq, directText: 'Agent child sent a message: settled result' });
+  await f.coordinator.onEvent({ sessionId: 'session', event: wake });
   await f.coordinator.whenIdle();
   assert.equal(f.sent.length, 1);
-  assert.equal(f.sent[0].outcome.text, 'settled result');
-  await f.coordinator.onEvent({ sessionId: 'session', event: followup[0] });
+  assert.equal(f.sent[0].outcome.text, 'Agent child sent a message: settled result');
+  await f.coordinator.onEvent({ sessionId: 'session', event: wake });
   assert.equal(f.sent.length, 1);
 });
 
