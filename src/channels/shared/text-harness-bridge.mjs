@@ -937,6 +937,9 @@ export class TextHarnessBridge {
 
   async #deliverDeferredOutcome(entry, outcome) {
     const text = deferredOutcomeText(outcome);
+    if (entry.directText && typeof this.#bot.sendText === 'function') {
+      return this.#bot.sendText(entry.target, text);
+    }
     return typeof this.#bot.sendDelivery === 'function'
       ? this.#bot.sendDelivery(entry.target, createTextDeliveryBlock(text, outcome.found ? 'markdown' : 'plain'))
       : this.#bot.sendText(entry.target, text);
