@@ -32,7 +32,10 @@
 
   <p>
     <a href="https://trendshift.io/repositories/169119#achievements">
-      <img src="https://trendshift.io/api/badge/trendshift/repositories/169119/daily?language=JavaScript" alt="DSH-IM — Trendshift #3 JavaScript Repository Of The Day" width="420">
+      <img src="https://trendshift.io/api/badge/repositories/169119" alt="DSH-IM — GitHub Trending #7 JavaScript Repository Of The Day" width="48%" align="middle">
+    </a>&nbsp;
+    <a href="https://trendshift.io/repositories/169119#achievements">
+      <img src="https://trendshift.io/api/badge/trendshift/repositories/169119/daily?language=JavaScript" alt="DSH-IM — Trendshift #3 JavaScript Repository Of The Day" width="48%" align="middle">
     </a>
   </p>
 

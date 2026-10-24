@@ -6,10 +6,47 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 ## [Unreleased]
 
+## [5.5.0] - 2026-10-24
+
 ### Added / 新增
+
+- Telegram 支持通过 Host 的 `speechToText` 服务转写语音及音频附件，再将转写文本交给会话处理；规范 WAV 可直接使用，其他格式通过本机 ffmpeg 转换。未配置服务、未选择提供方或转写失败时保留无文本语音提示，不虚构转写内容。（[#405](https://github.com/xmanrui/dsh-im/pull/405)）
+  Telegram can transcribe voice and audio attachments through the Host's `speechToText` service and pass the transcript to the conversation. Canonical WAV is used directly; other formats are converted with local ffmpeg. Missing services, unselected providers, and transcription failures retain a textless-voice notice without inventing a transcript. ([#405](https://github.com/xmanrui/dsh-im/pull/405))
+
+- Telegram 新增逐聊天发送预算，默认每分钟 15 条，可配置为 1–30 条；新消息等待可用额度，编辑、草稿、输入状态及表情不占用该队列。发送遇到 429 时按 `retry_after` 有限重试，最终无法投递时明确报告失败。（[#423](https://github.com/xmanrui/dsh-im/pull/423)）
+  Added a per-chat Telegram send budget, defaulting to 15 new messages per minute and configurable from 1 to 30. New sends wait for capacity; edits, drafts, typing actions, and reactions bypass that queue. Sends receiving 429 use bounded `retry_after` retries and report failure if delivery cannot complete. ([#423](https://github.com/xmanrui/dsh-im/pull/423))
+
+- Telegram 过程消息支持 0–60 秒发送间隔和可选编号，窗口内合并为最新进度，结束时先处理待发进度再发送答案；进度占位消息也显示编号，取消后清理待发帧与定时器。默认不节流、不编号。（[#425](https://github.com/xmanrui/dsh-im/pull/425)、[#426](https://github.com/xmanrui/dsh-im/pull/426)）
+  Telegram thinking traces support a 0–60-second cadence and optional numbering. Bursts coalesce to the latest progress, pending progress settles before the final answer, and placeholder progress is numbered too. Cancellation clears pending frames and timers. Pacing and numbering are off by default. ([#425](https://github.com/xmanrui/dsh-im/pull/425), [#426](https://github.com/xmanrui/dsh-im/pull/426))
+
+- 新增 Host 消息与设置界面的俄语翻译、客户端俄语语言包及翻译覆盖检查；中文语言标签继续使用中文，俄语使用俄语，其余语言回退到英文，俄语缺失条目先回退英文。（[#438](https://github.com/xmanrui/dsh-im/pull/438)、[#439](https://github.com/xmanrui/dsh-im/pull/439)、[#440](https://github.com/xmanrui/dsh-im/pull/440)）
+  Added Russian Host messages, settings translations, a client language pack, and dictionary coverage checks. Chinese locale tags retain Chinese, Russian selects Russian, and other locales fall back to English; missing Russian entries fall back to English first. ([#438](https://github.com/xmanrui/dsh-im/pull/438), [#439](https://github.com/xmanrui/dsh-im/pull/439), [#440](https://github.com/xmanrui/dsh-im/pull/440))
 
 - 同 Host 插件服务 `dshIm` 新增 `createTarget(botId, target)`，消费插件可把已知的会话路由注册成投递目标，注册后即可用 `targetId` 投递并出现在设置页目标列表；已存在的 `targetId` 以 `target-conflict` 拒绝。
   The same-Host `dshIm` service now exposes `createTarget(botId, target)`, so a consumer plugin can register a known conversation route as a delivery target; the target is then addressable by `targetId` and listed in the settings panel. An existing `targetId` is rejected with `target-conflict`.
+
+### Fixed / 修复
+
+- 修复绑定 DS Bot 的飞书私聊提问与回答续跑同步，支持 Host 提问及 DS Bot 的待回答卡片，重启后恢复未答问题；桌面端和 IM 端先答者生效，绑定不明确时提示回到桌面回答。（[#428](https://github.com/xmanrui/dsh-im/pull/428)）
+  Fixed question delivery and answer continuation for Feishu private chats bound to DS Bot, including Host questions and pending DS Bot cards recovered after restart. The first desktop or IM answer wins; ambiguous bindings ask the user to answer on the desktop. ([#428](https://github.com/xmanrui/dsh-im/pull/428))
+- Telegram 最终答案独立发送，不再只编辑进度占位消息，并在回合结束后清理状态表情；避免最终答案缺少新消息通知及遗留处理中标记。（[#412](https://github.com/xmanrui/dsh-im/pull/412)、[#414](https://github.com/xmanrui/dsh-im/pull/414)）
+  Telegram sends final answers as separate messages instead of only editing progress placeholders, and clears status reactions after a turn finishes, avoiding missing new-message notifications and stale processing indicators. ([#412](https://github.com/xmanrui/dsh-im/pull/412), [#414](https://github.com/xmanrui/dsh-im/pull/414))
+- 统一识别不同 Host 的缺失会话错误码，恢复失效会话绑定并改进相关命令的错误提示；不将权限错误误判为会话缺失。（[#444](https://github.com/xmanrui/dsh-im/pull/444)）
+  Recognize missing-session errors across Host error codes, recover stale session bindings, and improve related command guidance without treating permission failures as missing sessions. ([#444](https://github.com/xmanrui/dsh-im/pull/444))
+
+### Security / 安全
+
+- 将构建锁中的 ip-address 从 10.7.2 更新到 10.7.4，并重新生成 Host 产物，纳入 IPv6 地址解析可能阻塞进程的修复（[GHSA-rxp7-6hxx-x8q5](https://github.com/advisories/GHSA-rxp7-6hxx-x8q5)）。保留旧间接依赖锁的已有安装仍需刷新依赖解析。
+  Updated build-lock ip-address from 10.7.2 to 10.7.4 and rebuilt the Host artifact with the IPv6 parsing denial-of-service fix ([GHSA-rxp7-6hxx-x8q5](https://github.com/advisories/GHSA-rxp7-6hxx-x8q5)). Existing installations retaining old transitive dependency locks must refresh their resolution.
+
+### Notes / 使用说明
+
+- Telegram 语音转写需安装并配置 Host 的语音识别服务，非规范 WAV 转换需本机可用的 ffmpeg；本包不会自动安装 ffmpeg。发送预算是本地节流，不保证完全避免 Telegram 服务端限流。
+  Telegram transcription requires a configured Host speech-to-text service; noncanonical WAV conversion requires locally available ffmpeg, which this package does not install. The send budget is local pacing, not a guarantee against Telegram server-side limits.
+- 完善完整包名与 Desktop/Web 安装说明。依赖声明、Node.js 要求和 DSH 兼容声明保持不变；升级后重启 Host 并刷新管理页面。
+  Clarified the full package name and Desktop/Web installation instructions. Dependency declarations, Node.js requirements, and DSH compatibility declarations are unchanged. Restart the Host and refresh the management page after upgrading.
+- 感谢 [@unera](https://github.com/unera) 的 Telegram、俄语及测试贡献，以及 [@wanchun](https://github.com/wanchun) 的 `createTarget` 服务扩展。
+  Thanks to [@unera](https://github.com/unera) for Telegram, Russian localization, and test contributions, and [@wanchun](https://github.com/wanchun) for the `createTarget` service extension.
 
 ## [5.4.0] - 2026-10-21
 

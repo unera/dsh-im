@@ -25,6 +25,7 @@ import { t } from './i18n.mjs';
 import { watchHarnessMux } from './harness-mux.mjs';
 import { extractConnectionEvidence, messageDiagnosticError } from './connection-error.mjs';
 import { PromptFailureTracker } from './prompt-failure-tracker.mjs';
+import { isSessionNotFound } from './session-error.mjs';
 
 // Every channel plugin runs in the same Host process. Sharing ownership by
 // Host identity (or an explicitly configured HTTP origin) prevents clients
@@ -1420,7 +1421,7 @@ export class HarnessClient {
     } catch (error) {
       if (options?.signal?.aborted) throw options.signal.reason ?? error;
       if (error instanceof HarnessRpcError
-        && ['internal', 'gateway/internal', 'session-not-found', 'session/not-found'].includes(error.code)) {
+        && (['internal', 'gateway/internal'].includes(error.code) || isSessionNotFound(error.code))) {
         throw await this.#confirmedArchiveError(payload.sessionId, { signal: options?.signal }, error) ?? error;
       }
       throw error;
@@ -1436,7 +1437,7 @@ export class HarnessClient {
       return true;
     } catch (error) {
       if (error.code === 'session-archived') return true;
-      if (error instanceof HarnessRpcError && error.code === 'session-not-found') return false;
+      if (error instanceof HarnessRpcError && isSessionNotFound(error.code)) return false;
       throw error;
     }
   }
@@ -1610,7 +1611,7 @@ export class HarnessClient {
       );
       this.#consumeInteractionOwnerships(sessionId, history.events ?? []);
     } catch (error) {
-      if (!(error instanceof HarnessRpcError) || error.code !== 'session-not-found') throw error;
+      if (!(error instanceof HarnessRpcError) || !isSessionNotFound(error.code)) throw error;
       for (const ownership of candidates) {
         ownership.active = false;
         ownership.completed = true;
@@ -1681,7 +1682,7 @@ export class HarnessClient {
       if (this.#activeControlOwnership(sessionId, control) === ownership) {
         ownership.stopRequested = false;
       }
-      if (error instanceof HarnessRpcError && error.code === 'session-not-found') return false;
+      if (error instanceof HarnessRpcError && isSessionNotFound(error.code)) return false;
       throw error;
     }
   }

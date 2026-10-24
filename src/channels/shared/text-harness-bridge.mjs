@@ -73,6 +73,7 @@ import {
   messageFailureText,
   setLastMessageFailure,
 } from './message-failure.mjs';
+import { logDeliveryFailure } from './delivery-failure-log.mjs';
 import { beginStatusReaction } from './status-reaction.mjs';
 
 const INTERACTION_RESOLVED_TEXT = '这个问题已在其他客户端处理，无需再次回答。';
@@ -1359,12 +1360,16 @@ export class TextHarnessBridge {
       const answerFormat = fileOnlyCompletion ? 'plain' : 'markdown';
       let textDeliveryError = null;
       let textReceipt = null;
+      // What the channel observed about the send itself; it is written to the
+      // log together with the reference id the user is shown.
+      let deliveryEvidence = null;
       if (stream) {
         try {
           const result = await stream.finish(semanticStream || thinkingStream
             ? createTextDeliveryBlock(visibleAnswer, answerFormat)
             : visibleAnswer);
           streamFinished = true;
+          deliveryEvidence = result?.deliveryEvidence ?? deliveryEvidence;
           textReceipt = createDeliveryReceipt({
             deliveryId: messageId,
             presentation: result?.presentation
@@ -1394,6 +1399,7 @@ export class TextHarnessBridge {
                 createTextDeliveryBlock(visibleAnswer, answerFormat),
               )
             : await this.#bot.sendText(answerTarget, visibleAnswer);
+          deliveryEvidence = result?.deliveryEvidence ?? deliveryEvidence;
           textReceipt = createDeliveryReceipt({
             deliveryId: messageId,
             presentation: result?.presentation ?? `${this.#descriptor.key}-text`,
@@ -1403,6 +1409,7 @@ export class TextHarnessBridge {
           });
         } catch (error) {
           textDeliveryError = channelDeliveryFailure(error);
+          deliveryEvidence = error?.deliveryEvidence ?? deliveryEvidence;
         }
       }
       const finalDeliveryUnknown = textReceipt?.deliveryOutcome === 'unknown';
@@ -1416,6 +1423,11 @@ export class TextHarnessBridge {
           Object.assign(new Error('Final text delivery outcome is unknown'), { code: textReceipt.reason }),
         );
       }
+      if (textDeliveryError && deliveryEvidence) {
+        // The catch further down reports this error, and the log line must
+        // carry the same evidence the channel recorded for the failed send.
+        textDeliveryError.deliveryEvidence = deliveryEvidence;
+      }
       // A failed final text must not discard an already registered result file.
       // Settle the independent attachment path before surfacing the text error.
       const delivery = await this.#deliverArtifacts(target, messageId, artifacts, textReceipt);
@@ -1424,7 +1436,8 @@ export class TextHarnessBridge {
         throw textDeliveryError;
       }
       if (textDeliveryError && delivery.artifactSendErrors === 0) {
-        setLastMessageFailure(this.#status, textDeliveryError);
+        const failure = setLastMessageFailure(this.#status, textDeliveryError);
+        logDeliveryFailure(this.#logger, this.#descriptor.key, failure, textDeliveryError.deliveryEvidence);
       }
       if (delivery.userVisible) {
         this.#status.messagesReplied += 1;
@@ -1511,6 +1524,9 @@ export class TextHarnessBridge {
         `[dsh-im:${this.#descriptor.key}] failed to process a message [${failure.referenceId}]:`,
         messageFailureDiagnostic(error, failure),
       );
+      // One line per failed or unconfirmed delivery, carrying the same id the
+      // user will quote back: a reference id nobody can grep is useless.
+      logDeliveryFailure(this.#logger, this.#descriptor.key, failure, error?.deliveryEvidence);
       if (await presentStreamFailure(failureText)) {
         return error.deliveryReceipt;
       }

@@ -33,7 +33,10 @@
 
   <p>
     <a href="https://trendshift.io/repositories/169119#achievements">
-      <img src="https://trendshift.io/api/badge/trendshift/repositories/169119/daily?language=JavaScript" alt="DSH-IM — Trendshift JavaScript 日榜第 3 名" width="420">
+      <img src="https://trendshift.io/api/badge/repositories/169119" alt="DSH-IM — GitHub Trending JavaScript 日榜第 7 名" width="48%" align="middle">
+    </a>&nbsp;
+    <a href="https://trendshift.io/repositories/169119#achievements">
+      <img src="https://trendshift.io/api/badge/trendshift/repositories/169119/daily?language=JavaScript" alt="DSH-IM — Trendshift JavaScript 日榜第 3 名" width="48%" align="middle">
     </a>
   </p>
 

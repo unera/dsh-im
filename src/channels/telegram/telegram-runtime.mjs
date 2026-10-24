@@ -454,12 +454,56 @@ function telegramFailure(error) {
   };
 }
 
-function deliveryResult(presentation, providerMessageIds, deliveryOutcome = 'sent', reason) {
+function deliveryResult(presentation, providerMessageIds, deliveryOutcome = 'sent', reason, evidence = null) {
   return {
     presentation,
     providerMessageIds: [...new Set(providerMessageIds)],
     deliveryOutcome,
     ...(reason ? { reason } : {}),
+    ...(evidence ? { deliveryEvidence: { ...evidence, deliveryOutcome } } : {}),
+  };
+}
+
+/**
+ * What the send itself observed, kept next to the delivery result.
+ *
+ * The notice a user sees carries a reference id that used to be the only trace
+ * of an unconfirmed delivery. This record travels with the result so the same
+ * id, the attempt history and the text that never got a `message_id` can be
+ * written to the local log in one line.
+ */
+function deliveryEvidence({ target, parseMode, parts, error, reason = null, failedPart = null }) {
+  const attempts = Array.isArray(error?.sendAttempts) ? error.sendAttempts : [];
+  return {
+    chat_id: target?.chatId ?? null,
+    message_thread_id: Number.isInteger(target?.messageThreadId) ? target.messageThreadId : null,
+    // The Bot API request carries no `parse_mode` field: a part is either Rich
+    // Markdown or bare text, and that is what decides which path failed.
+    parse_mode: parseMode,
+    provider_reason: (typeof error?.code === 'string' && error.code) || reason || null,
+    failed_part: Number.isInteger(failedPart) ? failedPart : null,
+    attempts,
+    parts,
+  };
+}
+
+/** One part of an answer, keeping its text only when Telegram never confirmed it. */
+function deliveryPart(index, text, messageId) {
+  return {
+    index,
+    length: typeof text === 'string' ? text.length : 0,
+    message_id: messageId ?? null,
+    ...(messageId ? {} : { text: typeof text === 'string' ? text : '' }),
+  };
+}
+
+/** A plain fallback after a rejected Rich part still belongs to the same answer. */
+function mergeEvidence(primary, fallback) {
+  if (!primary || !fallback) return fallback ?? primary ?? null;
+  return {
+    ...fallback,
+    provider_reason: fallback.provider_reason ?? primary.provider_reason,
+    attempts: [...primary.attempts, ...fallback.attempts],
   };
 }
 
@@ -800,6 +844,7 @@ export class TelegramBotClient {
   async #sendPlain(target, text) {
     const chunks = splitTelegramRegularText(text);
     const providerMessageIds = [];
+    const parts = [];
     for (const [index, chunk] of chunks.entries()) {
       try {
         const result = await this.#api.sendMessage({
@@ -811,13 +856,18 @@ export class TelegramBotClient {
         });
         const id = telegramMessageId(result);
         if (id) providerMessageIds.push(id);
+        parts.push(deliveryPart(index, chunk, id));
       } catch (error) {
+        parts.push(deliveryPart(index, chunk, null));
         const failure = telegramFailure(error);
         return deliveryResult(
           'text-fallback',
           providerMessageIds,
           failure.outcome,
           failure.reason,
+          deliveryEvidence({
+            target, parseMode: 'none', parts, error, failedPart: index,
+          }),
         );
       }
     }
@@ -825,11 +875,19 @@ export class TelegramBotClient {
     // reader may still be staring at nothing, so the final answer claims only
     // what it can prove and lets the caller report the rest.
     if (providerMessageIds.length !== chunks.length) {
+      const unconfirmed = parts.find((part) => !part.message_id) ?? null;
       return deliveryResult(
         'text-fallback',
         providerMessageIds,
         'unknown',
         'telegram-message-id-missing',
+        deliveryEvidence({
+          target,
+          parseMode: 'none',
+          parts,
+          reason: 'telegram-message-id-missing',
+          failedPart: unconfirmed?.index ?? null,
+        }),
       );
     }
     return deliveryResult('text-fallback', providerMessageIds);
@@ -865,6 +923,7 @@ export class TelegramBotClient {
       return this.#sendPlain(target, block.text);
     }
     const providerMessageIds = [];
+    const parts = [];
     for (const [index, chunk] of chunks.entries()) {
       try {
         const result = await this.#api.sendRichMessage({
@@ -876,14 +935,20 @@ export class TelegramBotClient {
         });
         const id = telegramMessageId(result);
         if (id) providerMessageIds.push(id);
+        parts.push(deliveryPart(index, chunk.source ?? chunk.markdown, id));
       } catch (error) {
+        parts.push(deliveryPart(index, chunk.source ?? chunk.markdown, null));
         const failure = telegramFailure(error);
+        const evidence = deliveryEvidence({
+          target, parseMode: 'rich_markdown', parts, error, failedPart: index,
+        });
         if (failure.outcome === 'unknown') {
           return deliveryResult(
             'telegram-rich-final',
             providerMessageIds,
             'unknown',
             failure.reason,
+            evidence,
           );
         }
         const remaining = chunks.slice(index).map((part) => part.source).join('');
@@ -891,22 +956,35 @@ export class TelegramBotClient {
           ...target,
           replyToMessageId: index === 0 ? target.replyToMessageId : undefined,
         }, remaining);
+        // A successful fallback is a delivered answer; only an unconfirmed one
+        // needs the Rich rejection in the log as well.
         return deliveryResult(
           fallback.presentation,
           [...providerMessageIds, ...fallback.providerMessageIds],
           fallback.deliveryOutcome,
           fallback.reason,
+          fallback.deliveryOutcome === 'sent'
+            ? null
+            : mergeEvidence(evidence, fallback.deliveryEvidence),
         );
       }
     }
     // Same proof as the plain path: a rich send that never returned an id
     // cannot be reported as delivered.
     if (providerMessageIds.length !== chunks.length) {
+      const unconfirmed = parts.find((part) => !part.message_id) ?? null;
       return deliveryResult(
         'telegram-rich-final',
         providerMessageIds,
         'unknown',
         'telegram-message-id-missing',
+        deliveryEvidence({
+          target,
+          parseMode: 'rich_markdown',
+          parts,
+          reason: 'telegram-message-id-missing',
+          failedPart: unconfirmed?.index ?? null,
+        }),
       );
     }
     return deliveryResult('telegram-rich-final', providerMessageIds);
@@ -1002,6 +1080,10 @@ export class TelegramBotClient {
         : block;
       if (intervalMs <= 0) return editBlock(framed);
       if (Date.now() >= windowEndsAt) {
+        // The deadline has passed but its timer may not have run yet, and that
+        // callback would release the frame this newer one supersedes. Drop both
+        // the held frame and its timer before letting the new frame through.
+        clearWindowTimer();
         windowEndsAt = Date.now() + intervalMs;
         held = null;
         return editBlock(framed);
@@ -1241,14 +1323,18 @@ export class TelegramBotClient {
           if (result?.deliveryOutcome === 'unknown') {
             // 结果未知（超时等）：可能已送达，重发会造成重复，保留 unknown 状态。
             remember(result.providerMessageIds);
-            return deliveryResult('telegram-thinking', providerMessageIds, 'unknown', result.reason);
+            return deliveryResult(
+              'telegram-thinking', providerMessageIds, 'unknown', result.reason, result.deliveryEvidence,
+            );
           }
           // 明确失败：该分片确认未送达。纯文本分片再走一次 plain 重发
           // （markdown 分片的 plain 回退已在 #sendRich 内尝试过），只重发
           // 尚未发送的尾部内容，已成功的分片不重复。
           remember(result?.providerMessageIds);
           if (format === 'markdown') {
-            return deliveryResult('telegram-thinking', providerMessageIds, 'failed', result.reason);
+            return deliveryResult(
+              'telegram-thinking', providerMessageIds, 'failed', result.reason, result.deliveryEvidence,
+            );
           }
           warnFailure('final answer chunk', new Error('chunk definitively rejected'));
           try {

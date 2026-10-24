@@ -71,7 +71,34 @@ function preserveProviderMetadata(target, source) {
     target.retryAfter = source.retry_after;
   }
   if (Number.isInteger(source?.status)) target.status = source.status;
+  // A wrapped artifact error keeps the attempt history of the call it wraps.
+  if (Array.isArray(source?.sendAttempts)) target.sendAttempts = source.sendAttempts;
   return target;
+}
+
+/**
+ * One record per attempt of a message-creating call.
+ *
+ * A delivery that ends up unconfirmed may have spent several attempts -- the
+ * 2026-10-22 Telegram notice appeared 41 seconds after the incoming message --
+ * so the interface status and Telegram's own description are kept for every
+ * try, not just the last one the caller finally sees.
+ */
+function sendAttemptRecord(method, attempt, error) {
+  const status = Number(error?.status ?? error?.httpStatus);
+  const retryAfter = Number(error?.retry_after);
+  return {
+    attempt,
+    method,
+    status: Number.isInteger(status) ? status : null,
+    description: typeof error?.message === 'string' && error.message ? error.message : null,
+    retry_after: Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : null,
+  };
+}
+
+function withSendAttempts(error, attempts) {
+  if (error && typeof error === 'object') error.sendAttempts = attempts;
+  return error;
 }
 
 function inputRichMessage(value) {
@@ -462,12 +489,14 @@ export class TelegramApi {
     const chatId = String(payload.chat_id ?? '');
     await this.#reserveSendSlot(method, chatId, signal);
     let waitedMs = 0;
+    const attempts = [];
     for (let attempt = 1; ; attempt += 1) {
       try {
         return await (dispatch ?? (() => this.#call(method, payload, options)))();
       } catch (error) {
+        attempts.push(sendAttemptRecord(method, attempt, error));
         const retryAfter = rateLimitRetryAfter(error);
-        if (retryAfter === null) throw error;
+        if (retryAfter === null) throw withSendAttempts(error, attempts);
         const delayMs = Math.ceil(retryAfter * 1000);
         if (attempt >= MAX_SEND_ATTEMPTS || waitedMs + delayMs > MAX_RATE_LIMIT_WAIT_MS) {
           const limited = preserveProviderMetadata(new Error(
@@ -478,7 +507,7 @@ export class TelegramApi {
           // The caller still has to tell the user when the chat frees up.
           limited.retry_after = retryAfter;
           limited.retryAfter = retryAfter;
-          throw limited;
+          throw withSendAttempts(limited, attempts);
         }
         waitedMs += delayMs;
         this.#log(

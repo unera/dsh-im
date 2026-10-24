@@ -1,3 +1,4 @@
+import { isSessionNotFound } from './session-error.mjs';
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 
@@ -317,7 +318,7 @@ function sessionBindErrorMessage(error) {
     return t(`Session ID 格式无效。
 {usage}`, { usage: t(SESSION_BIND_USAGE) });
   }
-  if (['session-not-registered', 'session-not-found'].includes(error?.code)) {
+  if (error?.code === 'session-not-registered' || isSessionNotFound(error?.code)) {
     return t('未找到该会话，请先执行 /sessionlist 确认 Session ID。');
   }
   if (error?.code === 'session-subagent-unsupported') {
