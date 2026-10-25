@@ -146,6 +146,7 @@ export async function createProductionController(ctx, config = {}, internals = {
       });
       const workspaceScope = createBotWorkspaceScope(harness, {
         botId, workspaces, state, agentPresetCatalog,
+        botPersona: { profile: botConfig?.profile ?? null, permission: botConfig?.permission ?? null },
       });
       const e2eeMode = String(botConfig?.e2eeMode ?? 'optional').trim().toLowerCase();
       const cryptoStore = e2eeMode === 'off' ? null : await cryptoFor(botId);

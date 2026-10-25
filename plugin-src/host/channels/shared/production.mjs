@@ -169,6 +169,9 @@ export async function createTokenProductionController(ctx, config, internals, de
       const workspaceScope = createBotWorkspaceScope(harness, {
         dsBot: config.deliveryService?.dsBot,
         botId, workspaces, state, agentPresetCatalog,
+        // Profile and permission come from this bot's own record and are applied
+        // to every Session the scope creates, before the first prompt.
+        botPersona: { profile: botConfig?.profile ?? null, permission: botConfig?.permission ?? null },
       });
       const persistTokens = typeof definitions.persistBotCredential === 'function'
         ? (tokens) => definitions.persistBotCredential({

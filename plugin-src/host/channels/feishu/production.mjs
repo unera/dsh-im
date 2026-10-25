@@ -244,6 +244,7 @@ export async function createProductionController(ctx, config = {}, internals = {
       const workspaceScope = createBotWorkspaceScope(harness, {
         dsBot: config.deliveryService?.dsBot,
         botId: id, workspaces, state, agentPresetCatalog,
+        botPersona: { profile: botConfig?.profile ?? null, permission: botConfig?.permission ?? null },
       });
       // 语音是可选渠道能力:凭据读取失败时静默禁用,不阻断机器人连接。
       let voiceSource = null;

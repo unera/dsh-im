@@ -37,6 +37,7 @@ import {
   validateModelSelection,
 } from './model-setting.mjs';
 import { WORKSPACE_SESSION_STALE } from './workspace-session.mjs';
+import { applySessionPersona } from './session-persona.mjs';
 import { configValidationError, withConfigResource } from './config-read-error.mjs';
 
 const DELIVERY_DOCUMENT_VERSION = 2;
@@ -1642,8 +1643,15 @@ export function observeBotWorkspaceRemovals(
 
 export function createBotWorkspaceScope(
   harness,
-  { botId, workspaces, state, agentPresetCatalog, dsBot } = {},
+  { botId, workspaces, state, agentPresetCatalog, dsBot, botPersona } = {},
 ) {
+  // The bot's persona (agent-profile id and permission preset) is applied to
+  // every Session this scope creates, before control returns to the caller --
+  // which is before `ask`, and therefore before the first prompt is assembled.
+  const personaFor = () => {
+    const value = typeof botPersona === 'function' ? botPersona() : botPersona;
+    return value && typeof value === 'object' ? value : null;
+  };
   if (!harness || !workspaces || !state) throw new TypeError('harness, workspaces, and state are required');
   const incarnation = workspaces.incarnationFor(botId);
   const isCurrentScope = () => workspaces.has(botId)
@@ -2101,6 +2109,21 @@ export function createBotWorkspaceScope(
             conversationKey,
             conversationGeneration,
           });
+          const persona = personaFor();
+          if (persona && (persona.profile || persona.permission)) {
+            // Best-effort by construction: a deleted profile or an unreachable
+            // endpoint must not turn a reply into an error.
+            await applySessionPersona({
+              sessionId,
+              profile: persona.profile ?? null,
+              permission: persona.permission ?? null,
+              executeCommand: typeof target.executeCommand === 'function'
+                ? (id, line, options) => target.executeCommand(id, line, options)
+                : undefined,
+              log: console,
+              signal: options.signal,
+            });
+          }
           return sessionId;
         };
       }

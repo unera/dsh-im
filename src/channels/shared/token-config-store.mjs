@@ -154,11 +154,18 @@ export class TokenBotConfigStore {
     if (derived.botId !== botId || derived.tokenRef !== tokenRef) return null;
     const extension = this.#normalizeBotExtension(value);
     if (!extension || typeof extension !== 'object' || Array.isArray(extension)) return null;
+    // Bot-level persona. Both fields are optional and validated softly: an
+    // unusable value is dropped (and reported by the applier) rather than
+    // making the whole bot record invalid.
+    const profile = cleanString(value.profile);
+    const permission = cleanString(value.permission);
     return Object.freeze({
       botId,
       platformId,
       tokenRef,
       name,
+      ...(profile ? { profile } : {}),
+      ...(permission ? { permission } : {}),
       username: cleanString(value.username),
       createdAt: cleanString(value.createdAt) ?? new Date().toISOString(),
       connectedAt: cleanString(value.connectedAt),

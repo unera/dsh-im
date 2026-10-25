@@ -166,6 +166,9 @@ export async function createProductionController(ctx, config = {}, internals = {
       const workspaceScope = createBotWorkspaceScope(harness, {
         dsBot: config.deliveryService?.dsBot,
         botId, workspaces, state, agentPresetCatalog,
+        // Profile and permission come from this bot's own record and are applied
+        // to every Session the scope creates, before the first prompt.
+        botPersona: { profile: accountConfig?.profile ?? null, permission: accountConfig?.permission ?? null },
       });
       return new Runtime({
         diagnostics,
