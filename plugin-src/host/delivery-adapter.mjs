@@ -351,8 +351,13 @@ export function createDeliveryAdapter({ channel, workspaces, coreController, sta
       }
       for (const botId of botIds) {
         let sessions = null;
+        let authors = null;
         try {
-          sessions = stateSessions(await stateFor(botId));
+          const state = await stateFor(botId);
+          const snapshot = typeof state?.snapshot === 'function' ? state.snapshot() : null;
+          sessions = stateSessions(state);
+          authors = snapshot?.authors && typeof snapshot.authors === 'object'
+            && !Array.isArray(snapshot.authors) ? snapshot.authors : null;
         } catch {
           continue;
         }
@@ -360,6 +365,7 @@ export function createDeliveryAdapter({ channel, workspaces, coreController, sta
         const conversationKey = Object.keys(sessions).find((key) => sessions[key] === sessionId);
         if (!conversationKey) continue;
         const parsed = parseConversationKey(conversationKey);
+        const author = authors?.[conversationKey] ?? null;
         let botName = null;
         try {
           if (typeof coreController.describeDeliveryAccount === 'function') {
@@ -377,10 +383,10 @@ export function createDeliveryAdapter({ channel, workspaces, coreController, sta
           chatId: parsed?.chatId ?? null,
           threadId: parsed?.threadId ?? null,
           chatTitle: null,
-          senderId: parsed?.senderId ?? null,
-          senderName: null,
-          senderUsername: null,
-          senderIsBot: null,
+          senderId: author?.senderId ?? parsed?.senderId ?? null,
+          senderName: author?.senderName ?? null,
+          senderUsername: author?.senderUsername ?? null,
+          senderIsBot: author ? author.isBot === true : null,
         };
       }
       return null;

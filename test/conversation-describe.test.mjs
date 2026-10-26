@@ -112,3 +112,110 @@ test('a missing account name does not throw', async () => {
   assert.equal(described.botName, null);
   assert.equal(described.chatId, '1');
 });
+
+// --- persisted authors -------------------------------------------------------
+
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { ConversationStateStore } from '../src/channels/shared/conversation-state-store.mjs';
+
+async function withStore(run) {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-im-authors-'));
+  try {
+    return await run(join(dir, 'state.json'), dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+test('a conversation without an inbound message has no author', async () => {
+  await withStore(async (file) => {
+    const store = new ConversationStateStore(file);
+    await store.load();
+    await store.setSession('group:-100', 'session-1');
+    assert.equal(store.authorFor('group:-100'), null);
+  });
+});
+
+test('an inbound message records the author and it survives a reload', async () => {
+  await withStore(async (file) => {
+    const store = new ConversationStateStore(file);
+    await store.load();
+    await store.setSession('group:-100:7', 'session-1');
+    await store.rememberAuthor('group:-100:7', {
+      senderId: '781', senderName: 'Marish', senderUsername: 'marish', isBot: false,
+    });
+
+    const persisted = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(persisted.authors['group:-100:7'].senderId, '781');
+    assert.equal(persisted.authors['group:-100:7'].senderName, 'Marish');
+
+    const reopened = new ConversationStateStore(file);
+    await reopened.load();
+    assert.deepEqual(reopened.authorFor('group:-100:7'), {
+      senderId: '781', senderName: 'Marish', senderUsername: 'marish', isBot: false,
+      at: persisted.authors['group:-100:7'].at,
+    });
+  });
+});
+
+test('a new message overwrites the previous author without keeping text', async () => {
+  await withStore(async (file) => {
+    const store = new ConversationStateStore(file);
+    await store.load();
+    await store.rememberAuthor('group:-100', { senderId: '1', senderName: 'One' });
+    await store.rememberAuthor('group:-100', { senderId: '2', isBot: true, text: 'must not persist' });
+    const author = store.authorFor('group:-100');
+    assert.equal(author.senderId, '2');
+    assert.equal(author.isBot, true);
+    assert.equal(author.senderName, undefined);
+    assert.equal(author.text, undefined);
+    const persisted = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(JSON.stringify(persisted.authors).includes('must not persist'), false);
+  });
+});
+
+test('the adapter reports the group sender once the bridge recorded it', async () => {
+  const adapter = createDeliveryAdapter({
+    channel: 'telegram',
+    workspaces: fakeWorkspaces(['botA']),
+    coreController: {},
+    stateFor: async () => ({
+      snapshot: () => ({
+        sessions: { 'group:-100:7': 'session-1' },
+        authors: {
+          'group:-100:7': { senderId: '781', senderName: 'Marish', senderUsername: 'marish', isBot: false },
+        },
+      }),
+    }),
+  });
+  const described = await adapter.describeConversationBySession('session-1');
+  assert.equal(described.chatId, '-100');
+  assert.equal(described.threadId, '7');
+  assert.equal(described.senderId, '781');
+  assert.equal(described.senderName, 'Marish');
+  assert.equal(described.senderUsername, 'marish');
+  assert.equal(described.senderIsBot, false);
+});
+
+test('a recorded bot sender is flagged, and a direct chat keeps its key sender', async () => {
+  const adapter = createDeliveryAdapter({
+    channel: 'telegram',
+    workspaces: fakeWorkspaces(['botA']),
+    coreController: {},
+    stateFor: async () => ({
+      snapshot: () => ({
+        sessions: { 'group:-1': 'session-a', 'direct:161161619': 'session-b' },
+        authors: { 'group:-1': { senderId: '42', isBot: true } },
+      }),
+    }),
+  });
+  const group = await adapter.describeConversationBySession('session-a');
+  assert.equal(group.senderIsBot, true);
+  assert.equal(group.senderName, null);
+  const direct = await adapter.describeConversationBySession('session-b');
+  assert.equal(direct.senderId, '161161619');
+  assert.equal(direct.senderIsBot, null);
+});

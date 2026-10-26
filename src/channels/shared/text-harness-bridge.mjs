@@ -1285,6 +1285,19 @@ export class TextHarnessBridge {
       // opened: the auto-steer lane keys its authorship decision off this
       // record, and the finally below retires it when the turn settles.
       this.#turnAuthors.set(conversationKey, { senderId, steered: 0, turnMessageId: messageId });
+      // Persist who spoke here last, so a later describeConversation() can name
+      // the sender of a group turn without replaying any message text. Channels
+      // that own a different state store simply skip it.
+      try {
+        await this.#state.rememberAuthor?.(conversationKey, {
+          senderId,
+          senderName: normalized.senderName,
+          senderUsername: normalized.senderUsername,
+          isBot: normalized.senderIsBot === true,
+        });
+      } catch (error) {
+        this.#logger.warn?.(`[dsh-im:${this.#descriptor.key}] unable to remember the conversation author:`, error?.message ?? error);
+      }
       // The prompt is about to enter the Harness inbox, which is itself durable.
       // Marking the entry submitted first means a crash after this point reports
       // the message instead of replaying a turn the Harness may already own.

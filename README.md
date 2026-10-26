@@ -278,7 +278,8 @@ const info = await dshIm.describeConversation(sessionId);
 - 数据全部来自插件自己的状态文件（`sessions` 映射）与机器人配置，不要求内核新增字段。
 - `chatType` 为 `group`、`thread` 或 `dm`；`direct:dm:<id>` 形式的键会把 `<id>` 填进 `senderId`。
 - 每个会话首次反查写一行日志 `[dsh-im] describeConversation session=… chat=… sender=…`，之后不再重复。
-- 群聊里的发言人目前不落盘，因此 `senderName`、`senderUsername`、`senderIsBot` 为 `null`，`senderId` 仅私聊可用。
+- 发言人会被记住：桥接在把消息交给会话之前，把 `senderId`、显示名、`username` 与「是否机器人」写进机器人状态文件（`authors`），每条新消息覆盖前一条，只保留身份、不保留文本；因此重启后仍然可读。
+- 私聊的 `senderId` 还可以从键 `direct:dm:<id>` 推出，即使作者记录缺失也有值；群聊作者在第一条入站消息之前为 `null`。
 
 ### 上下文增强
 
