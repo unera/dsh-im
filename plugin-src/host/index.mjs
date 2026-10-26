@@ -57,6 +57,22 @@ export function createImHostPlugin(internals = {}) {
   const makeDeliveryService = internals.createDeliveryService ?? createDeliveryService;
   const startFeishu = internals.applyFeishu ?? applyFeishu;
   const startWeixin = internals.applyWeixin ?? applyWeixin;
+  /** Sessions already reported, so the log stays one line per session. */
+  const describedSessions = new Set();
+  const describeConversationLogged = async (sessionId) => {
+    const described = await deliveryService.describeConversation(sessionId);
+    if (described && !describedSessions.has(sessionId)) {
+      describedSessions.add(sessionId);
+      const log = typeof ctx?.logger === 'function' ? ctx.logger(name) : (ctx?.logger ?? console);
+      try {
+        log?.info?.(`describeConversation session=${sessionId} chat=${described.conversationKey} sender=${described.senderId ?? '-'}`);
+      } catch {
+        // Logging must never break the lookup.
+      }
+    }
+    return described;
+  };
+
   const startDingtalk = internals.applyDingtalk ?? applyDingtalk;
   const startWecom = internals.applyWecom ?? applyWecom;
   const startWecomApp = internals.applyWecomApp ?? applyWecomApp;
@@ -105,6 +121,7 @@ export function createImHostPlugin(internals = {}) {
           consumeInbound: (botId, options) => deliveryService.consumeInbound(botId, options),
           historyChecked: (botId, route, query, options) => deliveryService.historyChecked(botId, route, query, options),
           replyChecked: (botId, route, text, options) => deliveryService.replyChecked(botId, route, text, options),
+          describeConversation: (sessionId) => describeConversationLogged(sessionId),
           describeBot: (botId) => deliveryService.describeBot(botId),
           sendChecked: (botId, targetId, text, options) => deliveryService.sendChecked(botId, targetId, text, options),
           send: (botId, targetId, text, options) => (

@@ -261,6 +261,25 @@ Logo 由 dsh-im 的浏览器适配显示，无需修改 DSH。适配保留原始
 
 支持全局面板的 DSH 在左侧边栏提供「IM机器人」，沿用插件页的双对话框造型，以单色细线图标显示，点击打开完整 IM 管理面板。原「设置 → IM机器人」和插件详情页的「打开 IM机器人」入口保留。宿主也可通过可选客户端服务 `dshImClient` 嵌入面板；接口、兼容要求与接入示例见[客户端接入文档](docs/client-integration.md)。
 
+### 会话 → 对话反查（宿主服务）
+
+其他插件常常只拿得到会话 id，却需要知道这个会话属于哪个渠道、哪个机器人、哪个群和哪个话题。宿主服务 `dshIm` 为此提供一个只读方法：
+
+```js
+const info = await dshIm.describeConversation(sessionId);
+// null —— 该会话不属于任何 IM 对话
+// 否则：
+// { channel, botId, botName, conversationKey, chatType,
+//   chatId, threadId, chatTitle,
+//   senderId, senderName, senderUsername, senderIsBot }
+```
+
+- 只读：不访问网络、不创建会话、不阻塞回复，也不抛错；未知会话返回 `null`。
+- 数据全部来自插件自己的状态文件（`sessions` 映射）与机器人配置，不要求内核新增字段。
+- `chatType` 为 `group`、`thread` 或 `dm`；`direct:dm:<id>` 形式的键会把 `<id>` 填进 `senderId`。
+- 每个会话首次反查写一行日志 `[dsh-im] describeConversation session=… chat=… sender=…`，之后不再重复。
+- 群聊里的发言人目前不落盘，因此 `senderName`、`senderUsername`、`senderIsBot` 为 `null`，`senderId` 仅私聊可用。
+
 ### 上下文增强
 
 [查看上下文增强说明](docs/上下文增强.md)

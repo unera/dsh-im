@@ -482,6 +482,26 @@ export class DeliveryService {
     }
   }
 
+  /**
+   * Describe the conversation a session belongs to, or null when no channel
+   * owns it. Pure lookup: no network, no session creation, no throwing.
+   * @param {string} sessionId harness session id
+   */
+  async describeConversation(sessionId) {
+    if (typeof sessionId !== 'string' || sessionId === '') return null;
+    for (const { adapter } of this.#adapters.values()) {
+      if (typeof adapter.describeConversationBySession !== 'function') continue;
+      try {
+        const described = await adapter.describeConversationBySession(sessionId);
+        if (described) return described;
+      } catch {
+        // A channel that cannot answer must not hide the others.
+        continue;
+      }
+    }
+    return null;
+  }
+
   async describeBot(botId) {
     const id = botIdOf(botId);
     const registration = await this.#checkedRegistrationFor(id);

@@ -5,6 +5,7 @@ import {
   privateDeliverySuggestionFromConversationKey,
   resolvePrivateConversationKey,
 } from './delivery-suggestions.mjs';
+import { parseConversationKey } from '../../src/channels/shared/conversation/describe.mjs';
 import { withSessionBindingLock } from '../../src/channels/shared/session-binding-lock.mjs';
 import { dsBotError } from './ds-bot-client.mjs';
 
@@ -335,6 +336,55 @@ export function createDeliveryAdapter({ channel, workspaces, coreController, sta
     listDsBotBindings: () => workspaces.listDsBotBindings().filter(({ conversationKey }) => (
       privateDeliverySuggestionFromConversationKey(channel, conversationKey)
     )),
+    /**
+     * Reverse lookup for a session: which conversation of this channel owns it.
+     * Reads only what the channel already keeps (its state file), never the
+     * network, and never throws — an unknown session is simply `null`.
+     */
+    async describeConversationBySession(sessionId) {
+      if (typeof sessionId !== 'string' || sessionId === '') return null;
+      let botIds = [];
+      try {
+        botIds = workspaces.listBotIds();
+      } catch {
+        return null;
+      }
+      for (const botId of botIds) {
+        let sessions = null;
+        try {
+          sessions = stateSessions(await stateFor(botId));
+        } catch {
+          continue;
+        }
+        if (!sessions) continue;
+        const conversationKey = Object.keys(sessions).find((key) => sessions[key] === sessionId);
+        if (!conversationKey) continue;
+        const parsed = parseConversationKey(conversationKey);
+        let botName = null;
+        try {
+          if (typeof coreController.describeDeliveryAccount === 'function') {
+            botName = (await coreController.describeDeliveryAccount(botId))?.name ?? null;
+          }
+        } catch {
+          botName = null;
+        }
+        return {
+          channel,
+          botId,
+          botName,
+          conversationKey,
+          chatType: parsed?.chatType ?? null,
+          chatId: parsed?.chatId ?? null,
+          threadId: parsed?.threadId ?? null,
+          chatTitle: null,
+          senderId: parsed?.senderId ?? null,
+          senderName: null,
+          senderUsername: null,
+          senderIsBot: null,
+        };
+      }
+      return null;
+    },
     async listTargets(botId) {
       const targets = workspaces.listDeliveryTargets(botId);
       const configured = new Map(
