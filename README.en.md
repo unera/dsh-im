@@ -274,9 +274,10 @@ const info = await dshIm.describeConversation(sessionId);
 
 - Read-only: no network access, session creation, blocking reply, or thrown error; unknown Sessions return `null`.
 - Data comes from the plugin's state files (`sessions`) and bot configuration; no new core fields are required.
-- `chatType` is `group`, `thread`, or `dm`; a `direct:dm:<id>` key supplies `<id>` as `senderId`.
+- `chatType` is `group`, `thread`, or `dm`. Without an author record, `senderId` is derived from the key only where the key names the user: Matrix `direct:dm:<userId>`, `p2p:<id>` (Feishu, Weixin, WeCom app, DingTalk), QQ `c2c:<openid>`, and `direct:<id>` on Telegram and WeCom. On Slack, Discord, WhatsApp, iMessage and others `direct:<id>` names the DM channel, so it is reported as `chatId` and `senderId` stays `null`.
 - The first lookup logs one line per Session; later lookups do not repeat it.
-- The bridge remembers the last inbound author's id, name, username, and bot flag in the bot state, without storing message text.
+- The bridge remembers the last inbound author's id and bot flag in the bot state, without storing message text. The display name and username are stored only when context enhancement is enabled for that chat kind (or the channel already exposes a speaker name, as Matrix does); otherwise they are `null`.
+- Links inserted from conversation keys into numeric chat/topic fields are **Telegram-only**; QQ and other channels must use their native route fields and must not be treated as Telegram links.
 
 ### The two binding events
 
