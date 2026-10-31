@@ -6,6 +6,11 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 ## [Unreleased]
 
+### Fixed / 修复
+
+- 通用设置与插件更新统一沿用 `rpcAuthority`，修复已认证的 NAS／Docker 局域网访问被固定本机限制拒绝的问题；显式 `loopback` 仍限制本机访问。管理错误区分登录失效、访问拒绝、接口缺失与服务异常，保留现有更新确认和安装限制。（[#477](https://github.com/xmanrui/dsh-im/issues/477)）
+  General settings and plugin updates now honor `rpcAuthority`, allowing authenticated, trusted LAN access on NAS/Docker deployments while retaining explicit `loopback` restrictions. Management errors distinguish authentication, access denial, missing APIs, and service failures. Existing update confirmation and installation restrictions are preserved. ([#477](https://github.com/xmanrui/dsh-im/issues/477))
+
 ## [5.9.0] - 2026-10-31
 
 ### Added / 新增

@@ -202,7 +202,7 @@ export function createImHostPlugin(internals = {}) {
         }
       }
       try {
-        startUpdate(ctx);
+        startUpdate(ctx, { authority: config.rpcAuthority });
       } catch (error) {
         logger.error?.('[dsh-im] failed to activate update management; continuing with channels', error);
       }
