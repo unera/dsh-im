@@ -4522,6 +4522,9 @@ export class FeishuHarnessBridge {
     }
     if (type !== 'tool/call' && type !== 'assistant/message' && type !== 'turn/end') return;
     const turn = event.data?.turn;
+    // A later turn proves earlier rounds are over even when their turn/end was
+    // lost, so close them instead of leaving a card open forever.
+    if (Number.isSafeInteger(turn)) await this.#sealStaleGoalRounds(sessionId, turn);
     const rounds = Number.isSafeInteger(turn)
       ? this.#goalRoundsFor(sessionId, turn)
       : this.#goalRoundsFor(sessionId);
@@ -4539,6 +4542,12 @@ export class FeishuHarnessBridge {
     }
     for (const round of rounds) {
       if (round.finished || event.seq <= round.lastSeq) continue;
+      if (this.#state.sessionFor?.(round.key) !== sessionId) {
+        // The conversation was rebound to another session: this session's
+        // later output must not land in the card the user now sees there.
+        await this.#sealGoalRound(round, 'completed');
+        continue;
+      }
       round.lastSeq = event.seq;
       if (type === 'tool/call') {
         if (round.pendingStep) {
@@ -4576,9 +4585,18 @@ export class FeishuHarnessBridge {
   }
 
   async #openGoalRounds(sessionId, turn, roundNumber) {
-    if (await this.#sessionSyncOwns(sessionId)) return;
+    const syncedOpenIds = await this.#sessionSyncOpenIds(sessionId);
     for (const [key, route] of this.#conversationRoutes) {
-      if (this.#state.sessionFor?.(key) !== sessionId || this.#goalRounds.has(key)) continue;
+      const bound = this.#state.sessionFor?.(key) === sessionId;
+      const existing = this.#goalRounds.get(key);
+      if (existing && (existing.turn !== turn || !bound)) {
+        // The previous round never reported turn/end (dropped event, crashed
+        // Host), or the conversation was rebound: it cannot be updated any
+        // more, so close it instead of letting it block this round.
+        await this.#sealGoalRound(existing);
+      }
+      if (!bound || this.#isSyncedDmKey(key, syncedOpenIds)) continue;
+      if (this.#goalRounds.has(key)) continue;
       // A card left open by an abnormal exit is sealed before the new round
       // reuses the conversation's card slot.
       if (this.#stepCards.has(key)) await this.#finishStepCard(key);
@@ -4598,16 +4616,38 @@ export class FeishuHarnessBridge {
     }
   }
 
-  /** True when a synced DM already mirrors every turn of this session. */
-  async #sessionSyncOwns(sessionId) {
-    if (!this.#sessionSyncTargetsFor) return false;
+  /**
+   * Peers whose synced DM already mirrors this session with this bot. The
+   * mirror owns exactly that direct chat, not every conversation bound to the
+   * session, so a group topic keeps rendering alongside it.
+   */
+  async #sessionSyncOpenIds(sessionId) {
+    if (!this.#sessionSyncTargetsFor) return new Set();
     try {
       const targets = await this.#sessionSyncTargetsFor(sessionId);
-      return (Array.isArray(targets) ? targets : [])
-        .some((target) => target?.botId === this.#botId && nonEmptyString(target?.openId));
+      const openIds = new Set();
+      for (const target of Array.isArray(targets) ? targets : []) {
+        if (target?.botId === this.#botId && nonEmptyString(target?.openId)) openIds.add(target.openId);
+      }
+      return openIds;
     } catch {
-      return false;
+      return new Set();
     }
+  }
+
+  /** The plain peer DM key the session-sync mirror delivers into. */
+  #isSyncedDmKey(key, openIds) {
+    if (!(openIds instanceof Set) || openIds.size === 0) return false;
+    if (!key.startsWith('p2p:')) return false;
+    const peer = key.slice(4);
+    // Managed topics inside a DM are separate surfaces the mirror does not
+    // reach: only the plain direct chat is duplicated by it.
+    return !peer.includes(':') && openIds.has(peer);
+  }
+
+  async #sealStaleGoalRounds(sessionId, turn) {
+    const stale = this.#goalRoundsFor(sessionId).filter((round) => round.turn < turn);
+    for (const round of stale) await this.#sealGoalRound(round, 'completed');
   }
 
   async #sealGoalRound(round, reason = 'completed') {

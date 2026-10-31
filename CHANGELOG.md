@@ -13,8 +13,8 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 ### Fixed / 修复
 
-- 会话开启 Goal 后，自动续跑的每一轮会在绑定的飞书对话里渲染过程卡：工具调用、流式答案和每轮结果都会推送，不再整轮静默。已启用私聊同步时仍由同步镜像接管，不会重复开卡；目标轮次的驱动提示原文（`<goal_round>`）不会外发。方案见 `docs/方案/飞书目标自动续跑过程与结果可见方案.md`。
-  Turns opened automatically by an active Goal now render into the bound Feishu conversation with the same step card an IM turn uses — tool calls, the streamed answer and each round's result are delivered instead of leaving the chat silent for the whole round. A synced DM still owns the round without a duplicate card, and the `<goal_round>` driver prompt is never echoed. See `docs/方案/飞书目标自动续跑过程与结果可见方案.md`.
+- 会话开启 Goal 后，自动续跑的每一轮会在绑定的飞书对话里渲染过程卡：工具调用、流式答案和每轮结果都会推送，不再整轮静默。同一会话的群话题与同步私聊按投递位置分别去重；连接中断漏掉轮次结束、会话改绑等异常下旧轮会先收尾，不会阻塞后续轮次或串写；目标轮次的驱动提示原文（`<goal_round>`）不会外发。方案见 `docs/方案/飞书目标自动续跑过程与结果可见方案.md`。
+  Turns opened automatically by an active Goal now render into the bound Feishu conversation with the same step card an IM turn uses — tool calls, the streamed answer and each round's result are delivered instead of leaving the chat silent for the whole round. Deduplication happens per delivery surface, so a group topic keeps rendering next to a synced DM; rounds orphaned by a dropped turn-end or a conversation rebind are closed before the next round instead of blocking or writing into the wrong card; the `<goal_round>` driver prompt is never echoed. See `docs/方案/飞书目标自动续跑过程与结果可见方案.md`.
 
 ## [5.8.0] - 2026-10-30
 
