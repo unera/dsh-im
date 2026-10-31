@@ -435,7 +435,9 @@ dsh web --trusted-host dsh.example.com
     rpcAuthority: loopback
 ```
 
-`rpcAuthority` 默认为 `trusted-host`；显式设置 `loopback` 会额外要求回环 Host 和 Origin。更新与入站 TTL 管理始终仅允许回环访问。
+`rpcAuthority` 默认为 `trusted-host`，统一适用于渠道管理、通用设置（群记录保留、附件保留与清理、图片限制）和插件更新。通过 DSH 认证与 Host／Origin 校验的局域网或 NAS／Docker 访问可直接使用这些接口；显式设置 `loopback` 会额外要求回环 Host，以及存在时的回环 Origin。
+
+管理请求返回 401 时，请通过有效启动链接重新登录；403 表示访问被拒，应检查 DSH 可信地址、代理的 Host／Origin 和插件的 `rpcAuthority` 配置。远程访问 NAS 时，不要将浏览器地址改为自己电脑的 localhost。接口可访问不代表当前安装方式允许按钮更新：源码／链接安装、不支持的执行环境等仍沿用现有限制；确认安装、版本校验、并发锁和手动重启流程不变。
 
 局域网管理的 HTTP 集成测试可在构建插件后运行 `node scripts/verify-lan-management.mjs /path/to/built/deepseek-harness`。脚本启动原版 DSH CLI，使用独立临时 profile 和空机器人配置，检查默认访问、登录认证、Host／Origin 检查以及显式 `loopback` 策略，结束后停止服务并清理临时目录。测试通过回环 TCP 发送局域网 Host／Origin，不替代跨设备浏览器验收；原版 `0.1.5-alpha.1` CLI 本身拒绝 `--host 0.0.0.0`，跨设备测试需使用支持局域网访问的 Harness 环境。
 
