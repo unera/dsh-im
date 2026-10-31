@@ -48,7 +48,7 @@ async function fixture(t, {
   const replies = [];
   const patches = [];
   const visible = new Map();
-  const bindings = new Map(keys.map(([key]) => [key, SESSION]));
+  const bindings = new Map(keys.map(([key, , , sessionId]) => [key, sessionId ?? SESSION]));
   const state = {
     sessionFor: key => bindings.get(key),
     hasSeen: () => false,
@@ -110,7 +110,7 @@ async function fixture(t, {
   for (const [key, chatId, replyToMessageId] of keys) {
     bridge.rememberConversationRoute(key, { chatId, replyToMessageId });
   }
-  const emit = event => listener({ sessionId: SESSION, event });
+  const emit = (event, sessionId = SESSION) => listener({ sessionId, event });
   const drain = async () => {
     await bridge.waitForIdle();
     await flush();
@@ -251,4 +251,77 @@ test('rebinding the conversation stops the old round from writing into it', asyn
   const card = f.cardFor('reply-1');
   assert.doesNotMatch(card, /旧会话不该出现的结论/);
   assert.match(card, /已完成/, 'the round is closed instead of staying open');
+});
+
+const OTHER_TOPIC = 'group:chat-2:thread:thread-2';
+
+test('a goal in one bound conversation does not seal another session\'s running card', async t => {
+  const f = await fixture(t, {
+    keys: [
+      [TOPIC, 'chat-1', 'om-topic-1', SESSION],
+      [OTHER_TOPIC, 'chat-2', 'om-topic-2', OTHER_SESSION],
+    ],
+  });
+
+  f.emit(start(4, 99));
+  f.emit(goal(1, 100));
+  await f.drain();
+  f.emit(tool(4, 102));
+  await f.drain();
+
+  // Session B starts its own goal while A is still running.
+  f.emit(start(4, 299), OTHER_SESSION);
+  f.emit(goal(1, 300), OTHER_SESSION);
+  await f.drain();
+
+  assert.equal(f.replies.length, 2, 'both conversations open their own card');
+  assert.equal(f.replies[0].path.message_id, 'om-topic-1');
+  assert.equal(f.replies[1].path.message_id, 'om-topic-2');
+  assert.match(f.cardFor('reply-1'), /bash/);
+  assert.doesNotMatch(f.cardFor('reply-1'), /已完成/, 'A must stay open while its turn runs');
+
+  f.emit(answer('会话 A 的最终结论', 4, 104));
+  await f.drain();
+  f.emit(end(4, 105));
+  await f.drain();
+
+  assert.match(f.cardFor('reply-1'), /bash/);
+  assert.match(f.cardFor('reply-1'), /会话 A 的最终结论/);
+  assert.match(f.cardFor('reply-1'), /已完成/);
+
+  f.emit(answer('会话 B 的最终结论', 4, 303), OTHER_SESSION);
+  await f.drain();
+  f.emit(end(4, 304), OTHER_SESSION);
+  await f.drain();
+
+  assert.match(f.cardFor('reply-2'), /会话 B 的最终结论/);
+  assert.match(f.cardFor('reply-2'), /已完成/);
+  assert.match(f.cardFor('reply-1'), /会话 A 的最终结论/, 'A keeps its result');
+});
+
+test('a goal in a session with no Feishu conversation leaves bound cards alone', async t => {
+  const f = await fixture(t);
+
+  f.emit(start(4, 99));
+  f.emit(goal(1, 100));
+  await f.drain();
+  f.emit(tool(4, 102));
+  await f.drain();
+
+  // A plain `dsh web` session starts a goal; it has no conversation here.
+  f.emit(start(9, 499), 'web-only-session');
+  f.emit(goal(1, 500), 'web-only-session');
+  await f.drain();
+
+  assert.equal(f.replies.length, 1, 'the unbound session opens nothing');
+  assert.doesNotMatch(f.cardFor('reply-1'), /已完成/);
+
+  f.emit(answer('飞书会话的结果', 4, 104));
+  await f.drain();
+  f.emit(end(4, 105));
+  await f.drain();
+
+  assert.match(f.cardFor('reply-1'), /bash/);
+  assert.match(f.cardFor('reply-1'), /飞书会话的结果/);
+  assert.match(f.cardFor('reply-1'), /已完成/);
 });

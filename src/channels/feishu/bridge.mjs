@@ -4611,15 +4611,18 @@ export class FeishuHarnessBridge {
   async #openGoalRounds(sessionId, turn, roundNumber) {
     const syncedOpenIds = await this.#sessionSyncOpenIds(sessionId);
     for (const [key, route] of this.#conversationRoutes) {
-      const bound = this.#state.sessionFor?.(key) === sessionId;
+      // Only this session's own conversations take part. A key bound to some
+      // other session is not "rebound" from here — it is another session's
+      // card, and its round keeps running until that session says otherwise.
+      if (this.#state.sessionFor?.(key) !== sessionId) continue;
       const existing = this.#goalRounds.get(key);
-      if (existing && (existing.turn !== turn || !bound)) {
+      if (existing && existing.turn !== turn) {
         // The previous round never reported turn/end (dropped event, crashed
-        // Host), or the conversation was rebound: it cannot be updated any
-        // more, so close it instead of letting it block this round.
+        // Host): it cannot be updated any more, so close it instead of
+        // letting it block this round.
         await this.#sealGoalRound(existing);
       }
-      if (!bound || this.#isSyncedDmKey(key, syncedOpenIds)) continue;
+      if (this.#isSyncedDmKey(key, syncedOpenIds)) continue;
       if (this.#goalRounds.has(key)) continue;
       // A card left open by an abnormal exit is sealed before the new round
       // reuses the conversation's card slot.
