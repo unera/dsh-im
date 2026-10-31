@@ -276,10 +276,11 @@ const info = await dshIm.describeConversation(sessionId);
 
 - 只读：不访问网络、不创建会话、不阻塞回复，也不抛错；未知会话返回 `null`。
 - 数据全部来自插件自己的状态文件（`sessions` 映射）与机器人配置，不要求内核新增字段。
-- `chatType` 为 `group`、`thread` 或 `dm`；`direct:dm:<id>` 形式的键会把 `<id>` 填进 `senderId`。
+- `chatType` 为 `group`、`thread` 或 `dm`。没有作者记录时，只有当键本身标识用户时才从键推出 `senderId`：Matrix `direct:dm:<userId>`、`p2p:<id>`（飞书、微信、企业微信自建应用、钉钉）、QQ `c2c:<openid>`，以及 Telegram 和企业微信的 `direct:<id>`。Slack、Discord、WhatsApp、iMessage 等渠道的 `direct:<id>` 标识的是私聊频道，因此放进 `chatId`，`senderId` 保持 `null`。
 - 每个会话首次反查写一行日志 `[dsh-im] describeConversation session=… chat=… sender=…`，之后不再重复。
-- 发言人会被记住：桥接在把消息交给会话之前，把 `senderId`、显示名、`username` 与「是否机器人」写进机器人状态文件（`authors`），每条新消息覆盖前一条，只保留身份、不保留文本；因此重启后仍然可读。
-- 私聊的 `senderId` 还可以从键 `direct:dm:<id>` 推出，即使作者记录缺失也有值；群聊作者在第一条入站消息之前为 `null`。
+- 发言人会被记住：桥接在把消息交给会话之前，把 `senderId` 与「是否机器人」写进机器人状态文件（`authors`）；显示名和 `username` 只有在该聊天类型启用了上下文增强（或渠道本身提供发言人名称，如 Matrix）时才记录，否则为 `null`，每条新消息覆盖前一条，只保留身份、不保留文本；因此重启后仍然可读。
+- 上述渠道的私聊 `senderId` 即使作者记录缺失也能从键推出；群聊作者在第一条入站消息之前为 `null`。
+- 由对话键插入数字聊天／话题字段的链接是 **Telegram 专用**；QQ 和其他渠道必须使用各自的原生 route 字段，不能把它们当作 Telegram 链接。
 
 同一个反查还有一个同步版本，供在同步上下文里组装的场景使用（例如系统提示词的渲染）：
 

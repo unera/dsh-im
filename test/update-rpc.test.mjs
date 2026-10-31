@@ -82,6 +82,7 @@ test('Host update initialization failure leaves all channel activations availabl
   internals.installUpdateRpc = () => { throw new Error('updater unavailable'); };
   internals.installDeliveryRpc = () => {};
   internals.installInboundTtlRpc = () => {};
+  internals.installDeliverySyncRpc = () => {};
   internals.installSidebarSettingsRpc = () => {};
   internals.installHostLanguage = () => undefined;
   internals.installHostLanguageRpc = () => {};

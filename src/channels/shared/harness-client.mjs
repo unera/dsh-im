@@ -169,6 +169,23 @@ export function consumeDshImInputOrigin(scope, rpcId) {
   return origins.delete(rpcId);
 }
 
+/**
+ * Whether a dsh-im prompt id is registered, without claiming it.
+ *
+ * An observer such as the Session sync coordinator must be able to ask "did a
+ * messenger start this turn?" without taking the id away from the channel that
+ * still owns it. The entry lives until its TTL or the size cap evicts it, so a
+ * repeated question keeps answering the same way, while the one-shot
+ * `consumeDshImInputOrigin` stays the only way to claim it.
+ */
+export function isDshImInputOrigin(scope, rpcId) {
+  if (!scope || !['object', 'function', 'string'].includes(typeof scope)
+    || typeof rpcId !== 'string' || !rpcId) return false;
+  const origins = interactionRegistry(scope).imInputOrigins;
+  pruneImInputOrigins(origins);
+  return origins.has(rpcId);
+}
+
 // A Host RPC may not accept cancellation itself. Bound the caller's wait
 // without retrying an operation that the Host may already have accepted.
 function callWithSignal(call, signal) {
