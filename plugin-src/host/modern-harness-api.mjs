@@ -225,6 +225,9 @@ class ModernHarnessApi {
       describe: (request) => rpcResult(request, () => ({ ready: true, transport: 'typert' })),
     });
     this.workspace = Object.freeze({
+      rename: (request, signal) => rpcResult(request, () => this.#invoke(
+        'workspace', 'rename', { request: request.payload }, signal,
+      )),
       list: (request, signal) => rpcResult(request, () => this.#workspaceList(signal)),
       create: (request, signal) => rpcResult(request, () => this.#invoke(
         'workspace', 'create', { request: request.payload }, signal,

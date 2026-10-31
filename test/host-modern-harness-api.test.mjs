@@ -1525,3 +1525,21 @@ forEachSessionApi('a competitive approval', async (sessionApi) => {
   }, () => Promise.resolve('browser-owned'));
   assert.equal(delegated, 'browser-owned');
 });
+
+test('modern workspace adapter forwards rename without activating a session', async () => {
+  const calls = [];
+  const { ctx } = fakeContext({
+    stream() { throw new Error('rename does not need a stream'); },
+    async invoke(request) {
+      calls.push(request);
+      assert.equal(request.namespace, 'workspace');
+      assert.equal(request.method, 'rename');
+      assert.deepEqual(request.args, { request: { workspaceId: 'preset-group', title: 'Research' } });
+      return { workspace: { workspaceId: 'preset-group', title: 'Research' } };
+    },
+  });
+  const harness = new HarnessClient({ ...harnessConnection(ctx), workspace: '/workspace', autostart: false });
+  const result = await harness.rpc('workspace.rename', { workspaceId: 'preset-group', title: 'Research' });
+  assert.equal(result.workspace.title, 'Research');
+  assert.equal(calls.length, 1);
+});

@@ -19,9 +19,12 @@ import { workspaceLabels } from '../shared/workspace-labels.mjs';
 import { normalizeFeishuStepCardPanels } from './step-push-mode.mjs';
 
 export const MENU_PAGE_SIZE = 10;
+export const MODEL_PAGE_SIZE = 20;
+const MODEL_CARD_TEXT_LIMIT = 200;
 
 /** 预设下拉中「跟随默认」(null) 的哨兵值，供 initial_index 命中与回调识别。 */
 export const PRESET_FOLLOW_DEFAULT_SENTINEL = '__preset_follow_default__';
+export const REASONING_DEFAULT_SENTINEL = '__reasoning_default__';
 
 function plainText(content) {
   return { tag: 'plain_text', content: String(content) };
@@ -240,10 +243,19 @@ export function menuCard(ctx) {
   const curModelId = curModel ? `${curModel.provider}/${curModel.model}` : null;
   const flat = [];
   for (const group of groups) {
-    for (const model of (group.models || [])) flat.push({ id: `${group.id}/${model.id}`, name: `${group.name} - ${model.name}` });
+    for (const model of (group.models || [])) {
+      flat.push({
+        id: `${group.id}/${model.id}`,
+        name: `${group.name} - ${model.name}`,
+        reasoning: model.reasoning,
+      });
+    }
   }
   let modelDropdown = null;
+  let reasoningDropdown = null;
   if (flat.length > 1) {
+    // Keep the compact menu within Feishu select limits; the dedicated model
+    // card exposes the complete catalog.
     const setModelOptions = flat.slice(0, 30).map((opt) => ({
       text: { tag: 'plain_text', content: `${opt.id === curModelId ? '✓ ' : ''}${opt.name}` },
       value: opt.id,
@@ -255,6 +267,28 @@ export function menuCard(ctx) {
       initial_index: initialIndex(setModelOptions, curModelId),
       options: setModelOptions,
       behaviors: [{ type: 'callback', value: { action: 'model_pick' } }],
+    };
+  }
+  const selectedModel = flat.find((opt) => opt.id === curModelId);
+  const efforts = Array.isArray(selectedModel?.reasoning?.efforts)
+    ? selectedModel.reasoning.efforts.filter((effort) => typeof effort?.id === 'string' && effort.id)
+    : [];
+  if (efforts.length > 0) {
+    const currentEffort = curModel?.reasoningEffort ?? selectedModel.reasoning.defaultEffort;
+    const effortOptions = [
+      { id: REASONING_DEFAULT_SENTINEL, name: t('默认等级') },
+      ...efforts.map((effort) => ({ id: effort.id, name: effort.name || effort.id })),
+    ].map((effort) => ({
+      text: { tag: 'plain_text', content: `${effort.id === (currentEffort ?? REASONING_DEFAULT_SENTINEL) ? '✓ ' : ''}${effort.name}` },
+      value: effort.id,
+    }));
+    reasoningDropdown = {
+      tag: 'select_static',
+      name: 'reasoning_pick',
+      placeholder: { tag: 'plain_text', content: t('切换推理等级') },
+      initial_index: initialIndex(effortOptions, currentEffort ?? REASONING_DEFAULT_SENTINEL),
+      options: effortOptions,
+      behaviors: [{ type: 'callback', value: { action: 'reasoning_pick' } }],
     };
   }
 
@@ -291,6 +325,12 @@ export function menuCard(ctx) {
     tag: 'column_set', flex_mode: 'none',
     columns: [iconCol('🤖'), dropdownCol(row2[0]), iconCol('🧠'), dropdownCol(row2[1])],
   });
+  if (reasoningDropdown) {
+    elements.push({
+      tag: 'column_set', flex_mode: 'none',
+      columns: [iconCol('🧠'), dropdownCol(reasoningDropdown)],
+    });
+  }
 
   // 新会话 + 全部会话按钮
   const sessionButtons = buttonPair(newSessionLabel, 'new', t('📋 会话/关注'), 'sessions');
@@ -419,46 +459,52 @@ export function presetCard(catalog) {
  * The catalog comes from `harness.listModels()` or `session.models()`.
  * Groups are shown as text, then a flat dropdown for selection.
  */
-export function modelCard(catalog) {
+export function modelCard(catalog, { page = 0 } = {}) {
   const { groups, current } = catalog;
   const currentId = current ? `${current.provider}/${current.model}` : null;
+  const allModels = groups.flatMap((group) => group.models.map((model) => ({
+    group, model, id: `${group.id}/${model.id}`,
+  })));
+  const pages = Math.max(1, Math.ceil(allModels.length / MODEL_PAGE_SIZE));
+  const selectedPage = Number.isSafeInteger(page) && page >= 0 ? Math.min(page, pages - 1) : 0;
+  const currentOrdinal = currentId ? allModels.findIndex((entry) => entry.id === currentId) : -1;
+  const visibleModels = allModels.slice(selectedPage * MODEL_PAGE_SIZE, (selectedPage + 1) * MODEL_PAGE_SIZE);
 
   const elements = [
     { tag: 'div', text: markdown(t('**当前模型**：{model}', { model: currentId || t('未设置') })) },
     { tag: 'hr' },
   ];
 
-  // Count total models
-  let total = 0;
-  for (const group of groups) total += group.models.length;
-
-  if (total === 0) {
+  if (allModels.length === 0) {
     elements.push(
       { tag: 'div', text: markdown(t('当前没有可用模型。')) },
       backButton(),
     );
   } else {
-    // Show groups as text
+    const currentUnavailable = currentId && currentOrdinal < 0;
+    elements.push({ tag: 'div', text: markdown(t('第 {page}/{pages} 页 · 共 {total} 个模型', {
+      page: selectedPage + 1, pages, total: allModels.length,
+    })) });
+    if (currentUnavailable) elements.push({ tag: 'div', text: markdown(t('当前模型不可用：{model}', { model: currentId })) });
+    // Bound the Markdown and the picker together, so a large catalog does not
+    // produce an oversized card or silently hide selectable entries.
     for (const group of groups) {
-      const modelLines = group.models.map((m) => {
-        const id = `${group.id}/${m.id}`;
-        return `${id}${id === currentId ? ' ✓' : ''}`;
-      });
-      elements.push(
+      const modelLines = visibleModels.filter((entry) => entry.group === group).map(({ id }) => (
+        `${id}${id === currentId ? ' ✓' : ''}`
+      ));
+      if (modelLines.length) elements.push(
         { tag: 'div', text: markdown(`**${group.name}**\n${modelLines.join('\n')}`) },
       );
     }
 
-    // Flatten all models into a dropdown
-    const allOptions = [];
-    for (const group of groups) {
-      for (const model of group.models) {
-        allOptions.push({
-          value: `${group.id}/${model.id}`,
-          text: { tag: 'plain_text', content: `${group.name} - ${model.name}` },
-        });
-      }
-    }
+    const allOptions = visibleModels.map(({ group, model, id }) => ({
+      value: id,
+      text: { tag: 'plain_text', content: `${group.name} - ${model.name}`.slice(0, MODEL_CARD_TEXT_LIMIT) },
+    }));
+    const currentOption = allModels.find((entry) => entry.id === currentId)?.model;
+    const efforts = Array.isArray(currentOption?.reasoning?.efforts)
+      ? currentOption.reasoning.efforts.filter((effort) => typeof effort?.id === 'string' && effort.id)
+      : [];
 
     elements.push(
       { tag: 'hr' },
@@ -473,9 +519,34 @@ export function modelCard(catalog) {
         })),
         behaviors: [{ type: 'callback', value: { action: 'model_pick' } }],
       },
-      { tag: 'hr' },
-      backButton(),
     );
+    if (efforts.length > 0) {
+      const currentEffort = current?.reasoningEffort ?? currentOption.reasoning.defaultEffort;
+      const effortOptions = [
+        { id: REASONING_DEFAULT_SENTINEL, name: t('默认等级') },
+        ...efforts.map((effort) => ({ id: effort.id, name: effort.name || effort.id })),
+      ].map((effort) => ({
+        text: { tag: 'plain_text', content: `${effort.id === (currentEffort ?? REASONING_DEFAULT_SENTINEL) ? '✓ ' : ''}${effort.name}` },
+        value: effort.id,
+      }));
+      elements.push({
+        tag: 'select_static',
+        name: 'reasoning_pick',
+        placeholder: { tag: 'plain_text', content: t('切换推理等级') },
+        initial_index: initialIndex(effortOptions, currentEffort ?? REASONING_DEFAULT_SENTINEL),
+        options: effortOptions,
+        behaviors: [{ type: 'callback', value: { action: 'reasoning_pick' } }],
+      });
+    }
+    if (pages > 1) {
+      elements.push(buttonPair(
+        selectedPage > 0 ? t('◀ 上一页') : t('第一页'),
+        selectedPage > 0 ? `models:${selectedPage - 1}` : 'models:0',
+        selectedPage + 1 < pages ? t('下一页 ▶') : t('最后一页'),
+        selectedPage + 1 < pages ? `models:${selectedPage + 1}` : `models:${pages - 1}`,
+      ));
+    }
+    elements.push({ tag: 'hr' }, backButton());
   }
   return cardWith(t('🧠 模型列表'), elements);
 }

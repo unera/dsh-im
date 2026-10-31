@@ -72,7 +72,7 @@ export async function createTokenProductionController(ctx, config, internals, de
   const { defaultWorkspace, ungroupedWorkspace } = await prepareBotWorkspace(config);
   const WorkspaceStore = internals.WorkspaceStore ?? BotWorkspaceStore;
   const workspaces = internals.workspaces
-    ?? await new WorkspaceStore(paths.workspaces, { defaultWorkspace, ungroupedWorkspace }).load();
+    ?? await new WorkspaceStore(paths.workspaces, { defaultWorkspace, ungroupedWorkspace, groupByAgentPreset: config.groupByAgentPreset }).load();
   const configuredBots = configStore.list();
   await workspaces.reconcile(configuredBots.map((bot) => bot.botId));
   await Promise.all(configuredBots.map((bot) => workspaces.ensure(bot.botId, {
@@ -242,6 +242,7 @@ export async function createTokenProductionController(ctx, config, internals, de
   });
   controllerRef = coreController;
   const controller = createWorkspaceAwareController(coreController, {
+    harness,
     workspaces,
     stateFor,
     agentPresetCatalog,

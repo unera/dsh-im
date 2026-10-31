@@ -39,7 +39,11 @@ export const inject = [
 ];
 
 function channelConfig(config, name, deliveryService) {
-  const channel = { ...(config.dshHome ? { dshHome: config.dshHome } : {}), ...config[name] };
+  const channel = {
+    ...(config.dshHome ? { dshHome: config.dshHome } : {}),
+    ...(config.groupByAgentPreset === undefined ? {} : { groupByAgentPreset: config.groupByAgentPreset }),
+    ...config[name],
+  };
   const withAuthority = config.rpcAuthority === undefined
     ? channel
     : { ...channel, rpcAuthority: config.rpcAuthority };
@@ -218,7 +222,7 @@ export function createImHostPlugin(internals = {}) {
         }
       }
       try {
-        startUpdate(ctx);
+        startUpdate(ctx, { authority: config.rpcAuthority });
       } catch (error) {
         logger.error?.('[dsh-im] failed to activate update management; continuing with channels', error);
       }

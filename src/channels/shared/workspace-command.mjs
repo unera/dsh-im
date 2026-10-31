@@ -115,12 +115,7 @@ async function selectedWorkspacePath(value) {
 export async function workspacePathSnapshot(harness, { includeTitles = false, includeConversationDirectories = false, conversationKey, ...options } = {}) {
   const withEntries = includeTitles && typeof harness.listWorkspaceEntries === 'function';
   const listed = await (withEntries ? harness.listWorkspaceEntries(options) : harness.listWorkspaces(options));
-  const currentValue = typeof harness?.currentConversationWorkspace === 'function'
-    && typeof conversationKey === 'string' && conversationKey
-    ? harness.currentConversationWorkspace(conversationKey)
-    : typeof harness?.currentWorkspace === 'function'
-      ? harness.currentWorkspace()
-      : null;
+  const currentValue = await conversationSessionWorkspace(harness, conversationKey, options);
   const current = await existingWorkspacePath(currentValue);
   const entries = await Promise.all((Array.isArray(listed) ? listed : []).map(async (item) => ({
     path: await existingWorkspacePath(withEntries ? item?.path : item),
@@ -207,10 +202,21 @@ async function runWorkspaceListCommand(match, harness) {
   return workspaceListingCommand(harness, { includeConversationDirectories });
 }
 
-async function conversationEffectiveWorkspace(harness, conversationKey) {
-  if (typeof harness?.currentConversationWorkspace !== 'function'
-    || typeof conversationKey !== 'string' || !conversationKey) return null;
-  const [current] = await existingWorkspacePaths([harness.currentConversationWorkspace(conversationKey)]);
+export async function conversationSessionWorkspace(harness, conversationKey, options = {}) {
+  if (typeof conversationKey === 'string' && conversationKey) {
+    if (typeof harness?.resolveConversationWorkspace === 'function') {
+      return harness.resolveConversationWorkspace(conversationKey, options);
+    }
+    if (typeof harness?.currentConversationWorkspace === 'function') {
+      return harness.currentConversationWorkspace(conversationKey);
+    }
+  }
+  return harness?.currentWorkspace?.() ?? null;
+}
+
+async function conversationEffectiveWorkspace(harness, conversationKey, options) {
+  if (typeof conversationKey !== 'string' || !conversationKey) return null;
+  const [current] = await existingWorkspacePaths([await conversationSessionWorkspace(harness, conversationKey, options)]);
   harness.assertWorkspaceScope?.();
   return current ?? null;
 }
@@ -220,7 +226,7 @@ export async function resolveSessionListWorkspace(selector, harness, options = {
     // With no explicit selector the listing follows the conversation's effective
     // workspace, so /conv B makes /sessionlist list B instead of the bot default.
     if (options.conversationKey) {
-      const effective = await conversationEffectiveWorkspace(harness, options.conversationKey);
+      const effective = await conversationEffectiveWorkspace(harness, options.conversationKey, options);
       if (effective) return { workspace: effective };
     }
     if (typeof harness?.currentWorkspace !== 'function') {
@@ -235,7 +241,9 @@ export async function resolveSessionListWorkspace(selector, harness, options = {
     if (typeof harness?.listWorkspaces !== 'function') {
       return { error: t('当前机器人暂不支持按序号选择工作区。') };
     }
-    const { paths } = await workspacePathSnapshot(harness, options);
+    // Explicit workspace numbers must keep the bot-wide /workspacelist order;
+    // only a missing selector follows the bound conversation's actual group.
+    const { paths } = await workspacePathSnapshot(harness, { ...options, conversationKey: undefined });
     const position = Number(selector);
     if (!Number.isSafeInteger(position) || position < 1 || position > paths.length) {
       return { error: t('工作区序号不存在，请先执行 /workspacelist。') };

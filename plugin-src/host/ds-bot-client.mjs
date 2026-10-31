@@ -20,13 +20,16 @@ function appearance(bot) {
 /** Read DS Bot through the current Host's registered route, without a second
  * runtime, credentials, or assumptions about its configured storage directory. */
 export function createDsBotClient(ctx) {
-  async function call(endpoint, payload = {}) {
+  async function call(endpoint, payload = {}, options = {}) {
+    options.signal?.throwIfAborted();
     const connection = ctx.connection;
     if (typeof connection?.createSharedFetchHandler !== 'function') throw dsBotError();
+    const timeout = AbortSignal.timeout(15_000);
+    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
     const response = await connection.createSharedFetchHandler('/api').fetch(new Request(
       'http://localhost/api/bot', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ endpoint, payload }), signal: AbortSignal.timeout(15_000),
+        body: JSON.stringify({ endpoint, payload }), signal,
       },
     ), harnessPeer(ctx));
     if (!response.ok) throw dsBotError();
@@ -75,6 +78,29 @@ export function createDsBotClient(ctx) {
     },
     answerQuestion(sessionId, questionId, answer) {
       return call('answer-question', { sessionId, questionId, answer });
+    },
+    async updateBotModel(id, selection, options = {}) {
+      if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id)
+        || typeof selection?.provider !== 'string' || !selection.provider
+        || typeof selection?.model !== 'string' || !selection.model
+        || (selection.reasoningEffort !== undefined
+          && (typeof selection.reasoningEffort !== 'string' || !selection.reasoningEffort))) {
+        throw dsBotError('model-unavailable');
+      }
+      // DS Bot owns both its persisted model and all of its sessions. A model
+      // change without an explicit effort resets to that model's default.
+      const ref = `${selection.provider}/${selection.model}`;
+      const updated = await call('update-bot', {
+        id, model: ref, effort: selection.reasoningEffort ?? null,
+      }, options);
+      if (updated?.id !== id || updated?.model !== ref || updated?.appliedModel !== ref) {
+        throw dsBotError('model-selection-mismatch');
+      }
+      return { selected: {
+        provider: selection.provider,
+        model: selection.model,
+        ...(updated.appliedEffort ? { reasoningEffort: updated.appliedEffort } : {}),
+      } };
     },
     async resolve(id) {
       const result = await status();

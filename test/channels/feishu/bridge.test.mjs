@@ -6803,6 +6803,58 @@ function collectVisibleCardText(card) {
   return fragments.join('\n');
 }
 
+test('model card pagination preserves its page across model selection and refreshes the same card', async () => {
+  const fixture = stateFixture();
+  const sent = [];
+  let selected = { provider: 'provider', model: 'model-00' };
+  const models = Array.from({ length: 45 }, (_, index) => ({ id: `model-${String(index).padStart(2, '0')}`, name: `Model ${index}` }));
+  const catalog = () => ({ groups: [{ id: 'provider', name: 'Provider', models }], current: selected });
+  const bridge = new FeishuHarnessBridge({
+    client: cardClient(async (outgoing) => sent.push(outgoing), async (request) => {
+      const card = JSON.parse(request.data.content);
+      sent.push({ msgType: 'interactive', content: card, patched: request.path.message_id });
+      return { code: 0 };
+    }),
+    channel: {},
+    harness: {
+      ...sessionsHarness(1),
+      listModels: async () => ({ ...catalog(), failures: [] }),
+      workspaceSession: () => ({
+        models: async () => ({ ...catalog(), failures: [] }),
+        sessionExists: async () => true,
+        isRunning: async () => false,
+        hasActiveTurn: async () => false,
+        selectModel: async (selection) => { selected = selection; return { selected }; },
+      }),
+      selectSessionModel: async (_key, value) => { selected = value; return { selected }; },
+    },
+    state: fixture.state,
+    status: bridgeStatus(),
+    allowedSenderOpenIds: new Set(['ou_owner']),
+  });
+  await fixture.state.setSession('p2p:ou_owner', 'session-01');
+  await bridge.accept(event('model-card-open', '/m', { senderOpenId: 'ou_owner' }));
+  await bridge.waitForIdle();
+  const first = sent.at(-1).content;
+  await bridge.onCardAction(cardActionEvent('om_card_1', 'models:2', 'ou_owner'));
+  await bridge.waitForIdle();
+  const third = sent.at(-1).content;
+  assert.match(JSON.stringify(third), /model-40/);
+  assert.equal(selectsFromCard(third).find((select) => select.name === 'model_pick')?.options.length, 5);
+  const modelPick = selectsFromCard(third).find((select) => select.name === 'model_pick');
+  await bridge.onCardAction({
+    operator: { open_id: 'ou_owner' },
+    action: { value: { action: 'model_pick' }, option: modelPick.options[0].value },
+    context: { open_message_id: 'om_card_1' },
+  });
+  await bridge.waitForIdle();
+  assert.equal(selected.model, 'model-40');
+  const refreshed = sent.filter((item) => item.msgType === 'interactive').at(-1);
+  assert.equal(refreshed.patched, 'om_card_1');
+  assert.match(JSON.stringify(refreshed.content), /model-40/);
+  assert.ok(first);
+});
+
 test('/sessions alias uses the interactive session list and paginates across 25 sessions', async () => {
   const fixture = stateFixture();
   const sent = [];

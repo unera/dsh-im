@@ -356,6 +356,11 @@ DingTalk menus use a shared template built into the plugin; no template setup is
 
 ## Other features
 
+### Group new sessions by Agent Preset
+
+Set `groupByAgentPreset: true` in the plugin Host config to opt in (off by default). A per-channel value overrides the plugin default. An explicit preset creates or reuses a named `presets/<preset-id>` workspace under the default IM directory for new sessions. Existing chats retain their history and location; manual workspaces, conversation overrides and Feishu directory isolation take priority. See [configuration and behavior](docs/preset-workspaces.md).
+
+
 - **Image understanding**: built-in channels with image input support can send JPEG, PNG, WebP, and GIF files sent as images to Harness, with an optional text description. Originals are saved in the workspace (default 30 MB per image, 20 images per message). Model copies are resized or compressed within configurable 5 MB per-image and 20 MB total budgets, with workspace-file fallback when necessary. Configure these limits in General settings → Attachments → Image input. iMessage's MVP supports text DMs only.
 - **Switch workspaces from a bot card**: every bot card on the settings page shows its current Harness workspace. Enter an existing absolute directory path directly or open the directory picker. Switching clears only that bot's old chat mappings; it never deletes, empties, or archives old Sessions. Replies already in progress may finish, while later messages use the new workspace.
 - **Default directory and ungrouped sessions**: bots using the default share `$DSH_HOME/im`, while retaining separate chat-to-Session mappings. The plugin creates no workspace group for this directory. Use `/sessions` to list its ungrouped sessions and `/session <Session ID>` or `/session N` to bind an ordinary session. New sessions in other directories use the existing workspace grouping mechanism; switching back to the default directory creates ungrouped sessions again. Existing bot directories are not migrated automatically.
@@ -417,7 +422,9 @@ To additionally restrict IM management to local access, set the following in the
     rpcAuthority: loopback
 ```
 
-`rpcAuthority` defaults to `trusted-host`; explicitly selecting `loopback` additionally requires loopback Host and Origin values. Update and inbound TTL management always remain loopback-only.
+`rpcAuthority` defaults to `trusted-host` for channel management, general settings (group history retention, attachment retention and cleanup, and image limits), and plugin updates. LAN and NAS/Docker requests that pass DSH authentication and Host/Origin checks can use these APIs. Explicitly selecting `loopback` additionally requires a loopback Host and, when present, a loopback Origin.
+
+For management HTTP 401 errors, sign in again using a valid launch link. HTTP 403 means access was denied: check DSH trusted hosts, the proxy's Host/Origin handling, and the plugin's `rpcAuthority` setting. When accessing a remote NAS, do not change the browser address to localhost on your own computer. API access does not make every installation eligible for button updates: source/link installations and unsupported runtimes retain their existing restrictions. Installation confirmation, version checks, concurrency locks, and manual restart requirements are unchanged.
 
 After building the plugin, run `node scripts/verify-lan-management.mjs /path/to/built/deepseek-harness` for the LAN management HTTP integration check. It starts the original DSH CLI with an isolated temporary profile and no bot credentials, checks default access, authentication, Host/Origin checks, and explicit `loopback` restrictions, then stops the server and removes the temporary directory. Requests carry LAN Host/Origin values over loopback TCP; a browser on a second device requires separate verification. The original `0.1.5-alpha.1` CLI rejects `--host 0.0.0.0`, so that browser check needs a Harness environment that supports LAN access.
 

@@ -369,6 +369,11 @@ Web 与机器人可同时处理同一审批，先提交的「批准一次」或�
 
 ## 其它功能
 
+### 按 Agent Preset 自动分组
+
+在插件 Host 配置中设置 `groupByAgentPreset: true`（默认关闭），也可在某个渠道配置中单独启用或关闭。选择明确的 Agent Preset 后，在默认 IM 目录下创建或复用 `presets/<preset-id>` 工作区，标题使用 Preset 名称；后续新会话进入该分组。已有聊天保留原历史和位置，手动目录、会话级目录和飞书目录隔离优先。详见 [配置和行为](docs/preset-workspaces.md)。
+
+
 - **图片识别**：支持图片输入的内置渠道都可以把 JPEG、PNG、WebP，以及以图片文件方式发送的 GIF 交给 Harness；图片可以附带文字说明。默认每张原图最多接收 30 MB、每条消息最多 20 张；原图保存到会话工作区，模型副本自动缩放或压缩到单张 5 MB、总计 20 MB 以内，仍超限或模型不支持图片时按文件交给模型处理。这四项限制可在「通用设置 → 附件 → 图片输入」调整，对后续消息生效；原图沿用附件保留时长。调高模型输入上限会增加请求体积、处理耗时和模型成本，也仍受平台及宿主限制。iMessage 首版仅支持文本私聊。
 - **在机器人卡片切换工作区**：设置页中的每张机器人卡片都会显示当前 Harness 工作区。可以直接填写已有目录的绝对路径，也可以打开目录选择器。切换只清除该机器人的旧聊天映射，不会删除、清空或归档旧 Session；已经开始的回复可以继续完成，后续消息使用新工作区。
 - **默认目录与未分组会话**：所有使用默认值的机器人共用 `$DSH_HOME/im`，但各自保存聊天与会话的绑定。插件不会为该目录创建工作区分组；`/sessions` 可以列出该目录的未分组会话，`/session <Session ID>` 或 `/session N` 可以绑定普通会话。切换到其他目录后，新会话按现有机制加入对应工作区分组；切回默认目录后新会话归入「未分组」。已有机器人的目录不会自动迁移。
@@ -431,7 +436,9 @@ dsh web --trusted-host dsh.example.com
     rpcAuthority: loopback
 ```
 
-`rpcAuthority` 默认为 `trusted-host`；显式设置 `loopback` 会额外要求回环 Host 和 Origin。更新与入站 TTL 管理始终仅允许回环访问。
+`rpcAuthority` 默认为 `trusted-host`，统一适用于渠道管理、通用设置（群记录保留、附件保留与清理、图片限制）和插件更新。通过 DSH 认证与 Host／Origin 校验的局域网或 NAS／Docker 访问可直接使用这些接口；显式设置 `loopback` 会额外要求回环 Host，以及存在时的回环 Origin。
+
+管理请求返回 401 时，请通过有效启动链接重新登录；403 表示访问被拒，应检查 DSH 可信地址、代理的 Host／Origin 和插件的 `rpcAuthority` 配置。远程访问 NAS 时，不要将浏览器地址改为自己电脑的 localhost。接口可访问不代表当前安装方式允许按钮更新：源码／链接安装、不支持的执行环境等仍沿用现有限制；确认安装、版本校验、并发锁和手动重启流程不变。
 
 局域网管理的 HTTP 集成测试可在构建插件后运行 `node scripts/verify-lan-management.mjs /path/to/built/deepseek-harness`。脚本启动原版 DSH CLI，使用独立临时 profile 和空机器人配置，检查默认访问、登录认证、Host／Origin 检查以及显式 `loopback` 策略，结束后停止服务并清理临时目录。测试通过回环 TCP 发送局域网 Host／Origin，不替代跨设备浏览器验收；原版 `0.1.5-alpha.1` CLI 本身拒绝 `--host 0.0.0.0`，跨设备测试需使用支持局域网访问的 Harness 环境。
 

@@ -10,9 +10,110 @@ import { DeliveryService } from '../plugin-src/host/delivery-service.mjs';
 import { BotWorkspaceStore, createBotWorkspaceScope, CURRENT_DOCUMENT_VERSION } from '../src/channels/shared/bot-workspace-store.mjs';
 import { ConversationStateStore } from '../src/channels/shared/conversation-state-store.mjs';
 import { askInWorkspaceSession } from '../src/channels/shared/workspace-session.mjs';
+import { runModelCommand } from '../src/channels/shared/model-command.mjs';
 import { privateDeliverySuggestionFromConversationKey } from '../plugin-src/host/delivery-suggestions.mjs';
 
 const bot = { id: 'ds-one', name: 'stepBot', sessionId: 'session-one' };
+
+test('DS Bot client updates Bot-wide model and effort through update-bot only', async () => {
+  const calls = [];
+  const ctx = {
+    connection: {
+      createPeer: (options) => ({ ...options, dispose() {} }),
+      createSharedFetchHandler: () => ({
+        async fetch(request, peer) {
+          assert.equal(peer.principal.kind, 'owner');
+          const body = await request.json();
+          calls.push(body);
+          return Response.json({ ok: true, value: {
+            id: bot.id, model: body.payload.model, appliedModel: body.payload.model,
+            ...(body.payload.effort ? { appliedEffort: body.payload.effort } : {}),
+          } });
+        },
+      }),
+    },
+  };
+  const client = createDsBotClient(ctx);
+  assert.deepEqual(await client.updateBotModel(bot.id, {
+    provider: 'provider', model: 'model', reasoningEffort: 'high',
+  }), { selected: { provider: 'provider', model: 'model', reasoningEffort: 'high' } });
+  assert.deepEqual(calls[0], {
+    endpoint: 'update-bot', payload: { id: bot.id, model: 'provider/model', effort: 'high' },
+  });
+  assert.deepEqual(await client.updateBotModel(bot.id, {
+    provider: 'provider', model: 'model',
+  }), { selected: { provider: 'provider', model: 'model' } });
+  assert.deepEqual(calls[1].payload, { id: bot.id, model: 'provider/model', effort: null });
+  await assert.rejects(client.updateBotModel('bad/id', {
+    provider: 'provider', model: 'model',
+  }), { code: 'model-unavailable' });
+  assert.equal(calls.length, 2);
+});
+
+test('DS Bot client rejects an unconfirmed applied model', async () => {
+  const client = createDsBotClient({
+    connection: {
+      createPeer: () => ({ dispose() {} }),
+      createSharedFetchHandler: () => ({
+        async fetch() {
+          return Response.json({ ok: true, value: {
+            id: bot.id, model: 'provider/new', appliedModel: 'provider/old',
+          } });
+        },
+      }),
+    },
+  });
+  await assert.rejects(client.updateBotModel(bot.id, {
+    provider: 'provider', model: 'new',
+  }), { code: 'model-selection-mismatch' });
+});
+
+test('DS Bot client never dispatches an already cancelled model update', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let requests = 0;
+  const client = createDsBotClient({
+    connection: {
+      createSharedFetchHandler: () => ({
+        async fetch() {
+          requests++;
+          return Response.json({ ok: true, value: {
+            id: bot.id, model: 'provider/new', appliedModel: 'provider/new',
+          } });
+        },
+      }),
+    },
+  });
+  await assert.rejects(client.updateBotModel(bot.id, {
+    provider: 'provider', model: 'new',
+  }, { signal: controller.signal }), { name: 'AbortError' });
+  assert.equal(requests, 0);
+});
+
+test('DS Bot model update forwards cancellation to its in-flight request', async () => {
+  const controller = new AbortController();
+  let requestSignal;
+  const client = createDsBotClient({
+    connection: {
+      createSharedFetchHandler: () => ({
+        async fetch(request) {
+          requestSignal = request.signal;
+          assert.equal(requestSignal.aborted, false);
+          controller.abort();
+          requestSignal.throwIfAborted();
+          return Response.json({ ok: true, value: {
+            id: bot.id, model: 'provider/new', appliedModel: 'provider/new',
+          } });
+        },
+      }),
+    },
+  });
+  await assert.rejects(client.updateBotModel(bot.id, {
+    provider: 'provider', model: 'new',
+  }, { signal: controller.signal }), { name: 'AbortError' });
+  assert.equal(requestSignal.aborted, true);
+  assert.equal(requestSignal.reason, controller.signal.reason);
+});
 
 test('legacy iMessage direct keys cannot disguise native group chats as private', () => {
   assert.equal(privateDeliverySuggestionFromConversationKey('imessage', 'direct:iMessage;+;chat123'), null);
@@ -69,11 +170,31 @@ async function fixture(t, { channel = 'qq', key = 'c2c:user-one', target = { kin
   await state.setSession(key, 'old-session');
   await state.setSession('other-conversation', 'untouched');
   let current = { ...bot };
+  let selectedModel = { provider: 'provider-one', model: 'old', reasoningEffort: 'high' };
+  const modelCalls = [];
+  const modelCatalog = {
+    groups: [{ id: 'provider-one', name: 'Provider One', models: [
+      { id: 'old', name: 'Old', reasoning: { efforts: [
+        { id: 'high', name: 'High' }, { id: 'max', name: 'Max' },
+      ], defaultEffort: 'high' } },
+      { id: 'new', name: 'New', reasoning: { efforts: [
+        { id: 'low', name: 'Low' }, { id: 'max', name: 'Max' },
+      ], defaultEffort: 'low' } },
+    ] }], failures: [],
+  };
   const dsBot = {
     async status() { return { state: 'ready', bots: current ? [current] : [] }; },
     async resolve(id) {
       if (!current || current.id !== id) throw Object.assign(new Error('missing'), { code: 'ds-bot-not-found' });
       return current;
+    },
+    async updateBotModel(id, selection) {
+      modelCalls.push([id, selection]);
+      selectedModel = {
+        provider: selection.provider, model: selection.model,
+        ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}),
+      };
+      return { selected: selectedModel };
     },
   };
   const sent = [];
@@ -86,12 +207,15 @@ async function fixture(t, { channel = 'qq', key = 'c2c:user-one', target = { kin
   const asks = [];
   const harness = {
     async sessionExists() { return true; },
+    async getSessionModels() { return { ...modelCatalog, current: selectedModel }; },
+    async isSessionRunning() { return false; },
+    async hasActiveTurn() { return false; },
     async ask(id, text) { asks.push({ id, text }); return 'answer'; },
     async createSession() { return 'ordinary-new-session'; },
   };
   const scope = createBotWorkspaceScope(harness, { botId: 'im-one', workspaces, state, dsBot });
   return {
-    path, dir, workspaces, state, dsBot, adapter, service, scope, asks, sent, key,
+    path, dir, workspaces, state, dsBot, adapter, service, scope, asks, sent, key, modelCalls,
     setCurrent: (value) => { current = value; },
     ask: (text) => askInWorkspaceSession({ harness: scope.harness, state: scope.state, key, text }),
   };
@@ -124,6 +248,72 @@ test('bind, persist, rollover, desktop sync and unbind reuse one session without
   assert.equal(f.workspaces.workspaceFor('im-one'), f.dir);
   assert.equal((await f.ask('after unbind')).sessionId, 'ordinary-new-session');
 });
+
+test('bound Feishu model picker and reasoning command update DS Bot without creating an IM session', async (t) => {
+  const f = await fixture(t, { channel: 'feishu', key: 'p2p:ou_owner' });
+  await f.service.bindDsBot('im-one', f.key, bot.id);
+  // A saved binding can outlive the IM chat's locally remembered session.
+  await f.state.clearSession(f.key);
+  assert.equal(f.state.sessionFor(f.key), null);
+
+  const model = await runModelCommand('/model provider-one/new max', f.scope.harness, f.scope.state, f.key);
+  assert.match(model.message, /模型已切换为：/);
+  assert.deepEqual(f.modelCalls, [[bot.id, {
+    provider: 'provider-one', model: 'new', reasoningEffort: 'max',
+  }]]);
+  assert.equal(f.state.sessionFor(f.key), bot.sessionId);
+
+  const reasoning = await runModelCommand('/reasoning --default', f.scope.harness, f.scope.state, f.key);
+  assert.match(reasoning.message, /推理等级已切换为：/);
+  assert.deepEqual(f.modelCalls[1], [bot.id, { provider: 'provider-one', model: 'new' }]);
+  assert.equal(f.state.sessionFor(f.key), bot.sessionId);
+
+  f.setCurrent({ ...bot, sessionId: 'session-two' });
+  const rolled = await runModelCommand('/model 1', f.scope.harness, f.scope.state, f.key);
+  assert.match(rolled.message, /模型已切换为：/);
+  assert.equal(f.state.sessionFor(f.key), 'session-two');
+  assert.deepEqual(f.modelCalls[2], [bot.id, { provider: 'provider-one', model: 'old' }]);
+});
+
+test('bound model selection rejects stale and missing DS Bot without mutating another session', async (t) => {
+  const f = await fixture(t, { channel: 'feishu', key: 'p2p:ou_owner' });
+  await f.service.bindDsBot('im-one', f.key, bot.id);
+  await f.scope.harness.resolveDsBotSession(f.key);
+  const handle = f.scope.harness.workspaceSession(bot.sessionId, f.key);
+  f.setCurrent({ ...bot, sessionId: 'session-two' });
+  await assert.rejects(handle.selectModel({ provider: 'provider-one', model: 'new' }), {
+    code: 'workspace-session-stale',
+  });
+  assert.deepEqual(f.modelCalls, []);
+  f.setCurrent(null);
+  const result = await runModelCommand('/model 2', f.scope.harness, f.scope.state, f.key);
+  assert.doesNotMatch(result.message, /模型已切换为：/);
+  assert.deepEqual(f.modelCalls, []);
+});
+
+for (const command of ['/model provider-one/new max', '/reasoning --default']) {
+  test(`bound ${command} cancelled during Bot resolution never updates the model`, async (t) => {
+    const f = await fixture(t, { channel: 'feishu', key: 'p2p:ou_owner' });
+    await f.service.bindDsBot('im-one', f.key, bot.id);
+    const controller = new AbortController();
+    const resolve = f.dsBot.resolve;
+    let resolutions = 0;
+    f.dsBot.resolve = async (id) => {
+      const current = await resolve(id);
+      // The command first resolves its session, then rechecks the Bot just
+      // before selecting. Simulate bridge shutdown during that second read.
+      if (++resolutions === 2) controller.abort();
+      return current;
+    };
+    const result = await runModelCommand(command, f.scope.harness, f.scope.state, f.key, {
+      signal: controller.signal,
+    });
+    assert.equal(resolutions, 2);
+    assert.match(result.message, /切换已取消/);
+    assert.deepEqual(f.modelCalls, []);
+    assert.equal(f.state.sessionFor(f.key), bot.sessionId);
+  });
+}
 
 test('binding needs no delivery target, and ordinary sync settings cannot disable or duplicate its sync', async (t) => {
   const f = await fixture(t);

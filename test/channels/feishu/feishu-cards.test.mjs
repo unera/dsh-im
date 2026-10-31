@@ -322,6 +322,53 @@ test('menu session dropdown highlights the currently bound session via initial_i
   assert.equal(pick.initial_index, 2);
 });
 
+test('model cards expose reasoning levels for the selected model', () => {
+  const card = JSON.parse(modelCard({
+    groups: [{ id: 'provider', name: 'Provider', models: [{
+      id: 'model', name: 'Model', reasoning: {
+        defaultEffort: 'balanced', efforts: [
+          { id: 'fast', name: 'Fast' }, { id: 'balanced', name: 'Balanced' },
+        ],
+      },
+    }] }],
+    current: { provider: 'provider', model: 'model', reasoningEffort: 'balanced' },
+  }));
+  const pick = selects(card).find((s) => s.name === 'reasoning_pick');
+  assert.deepEqual(pick?.options.map((option) => option.value), ['__reasoning_default__', 'fast', 'balanced']);
+  assert.equal(pick?.initial_index, 3);
+});
+
+test('menu model picker remains capped at the compact-menu limit', () => {
+  const models = Array.from({ length: 35 }, (_, index) => ({ id: `model-${index}`, name: `Model ${index}` }));
+  const card = JSON.parse(menuCard({
+    currentSession: { id: 'session-one', title: 'Session one' },
+    sessions: [{ id: 'session-one', title: 'Session one' }],
+    modelCatalog: { groups: [{ id: 'provider', name: 'Provider', models }], current: null },
+  }));
+  const pick = selects(card).find((select) => select.name === 'model_pick');
+  assert.equal(pick?.options.length, 30);
+});
+
+test('model cards paginate large catalogs and expose navigation actions', () => {
+  const models = Array.from({ length: 45 }, (_, index) => ({ id: `model-${index}`, name: `Model ${index}` }));
+  const first = JSON.parse(modelCard({ groups: [{ id: 'provider', name: 'Provider', models }], current: null }, { page: 0 }));
+  assert.equal(selects(first).find((s) => s.name === 'model_pick')?.options.length, 20);
+  assert.match(JSON.stringify(first), /models:1/);
+  const third = JSON.parse(modelCard({ groups: [{ id: 'provider', name: 'Provider', models }], current: null }, { page: 2 }));
+  assert.equal(selects(third).find((s) => s.name === 'model_pick')?.options.length, 5);
+  assert.match(JSON.stringify(third), /最后一页/);
+});
+
+test('model cards keep the full model catalog available across pages', () => {
+  const models = Array.from({ length: 35 }, (_, index) => ({ id: `model-${index}`, name: `Model ${index}` }));
+  const card = JSON.parse(modelCard({ groups: [{ id: 'provider', name: 'Provider', models }], current: null }));
+  const pick = selects(card).find((s) => s.name === 'model_pick');
+  assert.equal(pick?.options.length, 20);
+  assert.equal(pick?.options.at(-1)?.value, 'provider/model-19');
+  const later = JSON.parse(modelCard({ groups: [{ id: 'provider', name: 'Provider', models }], current: null }, { page: 1 }));
+  assert.equal(selects(later).find((s) => s.name === 'model_pick')?.options.at(-1)?.value, 'provider/model-34');
+});
+
 test('model card dropdown highlights the current model via initial_index', () => {
   const catalog = {
     groups: [

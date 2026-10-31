@@ -52,4 +52,5 @@ jobs:
           test/conversation-workspace-races.test.mjs
           test/conversation-workspace-switch-order.test.mjs
           test/conversation-workspace-bind-recovery.test.mjs
+          test/preset-workspaces.test.mjs
           test/channels/shared/qr-encoding.test.mjs

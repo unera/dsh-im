@@ -13,6 +13,23 @@ const NO_CHANNELS = Object.freeze({
   applyIMessage: async () => {}, applyOffice: async () => {},
 });
 
+test('Host forwards its management authority to both general settings and updates', async () => {
+  for (const rpcAuthority of [undefined, 'trusted-host', 'loopback']) {
+    const seen = [];
+    const config = { rpcAuthority };
+    const internals = Object.fromEntries(CHANNELS.map(([, applyName]) => [applyName, async () => {}]));
+    Object.assign(internals, {
+      createDeliveryService: () => ({}),
+      installHostLanguage: () => undefined,
+      installUpdateRpc: (_ctx, options) => seen.push(['update', options?.authority]),
+      installInboundTtlRpc: (_ctx, options) => { assert.equal(options.config, config); seen.push(['settings', options.config.rpcAuthority]); },
+      installSidebarSettingsRpc: () => {}, installDeliveryRpc: () => {},
+    });
+    await createImHostPlugin(internals).apply({ connection: { fetch: {} } }, config);
+    assert.deepEqual(seen, [['update', rpcAuthority], ['settings', rpcAuthority]]);
+  }
+});
+
 test('Host resolves the bot message language before channels start and serves its RPC', async () => {
   const order = [];
   let resolved = false;
@@ -106,7 +123,8 @@ test('Host composes IM channels and the AI Office connector inside one plugin co
   const ctx = { marker: 'shared-context' };
   const config = {
     rpcAuthority: 'trusted-host',
-    feishu: { domain: 'feishu' },
+    groupByAgentPreset: true,
+    feishu: { domain: 'feishu', groupByAgentPreset: false },
     weixin: { timeout: 30 },
     dingtalk: { replyTimeoutMs: 60_000 },
     wecom: { replyTimeoutMs: 60_000 },
@@ -128,17 +146,17 @@ test('Host composes IM channels and the AI Office connector inside one plugin co
     'typertGateway',
   ]);
   assert.deepEqual(calls, [
-    ['feishu', ctx, { ...config.feishu, rpcAuthority: 'trusted-host', deliveryService }],
-    ['weixin', ctx, { ...config.weixin, rpcAuthority: 'trusted-host', deliveryService }],
-    ['dingtalk', ctx, { ...config.dingtalk, rpcAuthority: 'trusted-host', deliveryService }],
-    ['wecom', ctx, { ...config.wecom, rpcAuthority: 'trusted-host', deliveryService }],
-    ['qq', ctx, { ...config.qq, rpcAuthority: 'trusted-host', deliveryService }],
-    ['slack', ctx, { ...config.slack, rpcAuthority: 'trusted-host', deliveryService }],
-    ['telegram', ctx, { ...config.telegram, rpcAuthority: 'trusted-host', deliveryService }],
-    ['discord', ctx, { ...config.discord, rpcAuthority: 'trusted-host', deliveryService }],
-    ['whatsapp', ctx, { ...config.whatsapp, rpcAuthority: 'trusted-host', deliveryService }],
-    ['imessage', ctx, { ...config.imessage, rpcAuthority: 'trusted-host', deliveryService }],
-    ['office', ctx, { ...config.office, rpcAuthority: 'trusted-host' }],
+    ['feishu', ctx, { groupByAgentPreset: true, ...config.feishu, rpcAuthority: 'trusted-host', deliveryService }],
+    ['weixin', ctx, { groupByAgentPreset: true, ...config.weixin, rpcAuthority: 'trusted-host', deliveryService }],
+    ['dingtalk', ctx, { groupByAgentPreset: true, ...config.dingtalk, rpcAuthority: 'trusted-host', deliveryService }],
+    ['wecom', ctx, { groupByAgentPreset: true, ...config.wecom, rpcAuthority: 'trusted-host', deliveryService }],
+    ['qq', ctx, { groupByAgentPreset: true, ...config.qq, rpcAuthority: 'trusted-host', deliveryService }],
+    ['slack', ctx, { groupByAgentPreset: true, ...config.slack, rpcAuthority: 'trusted-host', deliveryService }],
+    ['telegram', ctx, { groupByAgentPreset: true, ...config.telegram, rpcAuthority: 'trusted-host', deliveryService }],
+    ['discord', ctx, { groupByAgentPreset: true, ...config.discord, rpcAuthority: 'trusted-host', deliveryService }],
+    ['whatsapp', ctx, { groupByAgentPreset: true, ...config.whatsapp, rpcAuthority: 'trusted-host', deliveryService }],
+    ['imessage', ctx, { groupByAgentPreset: true, ...config.imessage, rpcAuthority: 'trusted-host', deliveryService }],
+    ['office', ctx, { groupByAgentPreset: true, ...config.office, rpcAuthority: 'trusted-host' }],
   ]);
 });
 

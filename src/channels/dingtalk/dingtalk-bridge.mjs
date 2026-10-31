@@ -30,7 +30,7 @@ import {
   isPresetCommand,
   runPresetCommand,
 } from '../shared/preset-command.mjs';
-import { runWorkspaceCommand } from '../shared/workspace-command.mjs';
+import { conversationSessionWorkspace, runWorkspaceCommand } from '../shared/workspace-command.mjs';
 import { askInWorkspaceSession } from '../shared/workspace-session.mjs';
 import {
   captureContextEnhancement,
@@ -940,8 +940,7 @@ export class DingtalkHarnessBridge {
       });
       return;
     }
-    const sessionWorkspace = typeof this.#harness.currentConversationWorkspace === 'function'
-      ? this.#harness.currentConversationWorkspace(key) : this.#harness.currentWorkspace?.();
+    const sessionWorkspace = await conversationSessionWorkspace(this.#harness, key, { signal: this.#signal });
     if (entry.workspace !== this.#harness.currentWorkspace?.()
       || entry.sessionWorkspace !== sessionWorkspace
       || entry.sessionId !== this.#state.sessionFor(key)) {

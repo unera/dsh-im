@@ -37,7 +37,7 @@ import {
   isPresetCommand,
   runPresetCommand,
 } from '../shared/preset-command.mjs';
-import { runWorkspaceCommand, workspacePathSnapshot } from '../shared/workspace-command.mjs';
+import { conversationSessionWorkspace, runWorkspaceCommand, workspacePathSnapshot } from '../shared/workspace-command.mjs';
 import { askInWorkspaceSession } from '../shared/workspace-session.mjs';
 import {
   captureContextEnhancement,
@@ -660,7 +660,8 @@ export class WecomHarnessBridge {
     const options = { signal: this.#signal };
     const settled = await Promise.allSettled([
       workspacePathSnapshot(this.#harness, options),
-      this.#harness.listWorkspaceSessions?.(workspace, options),
+      conversationSessionWorkspace(this.#harness, key, options)
+        .then((path) => this.#harness.listWorkspaceSessions?.(path, options)),
       (async () => {
         const session = sessionId ? this.#harness.workspaceSession?.(sessionId, key) : null;
         return typeof session?.models === 'function'
@@ -852,7 +853,8 @@ export class WecomHarnessBridge {
         let description = '';
         if (menu.section === 'sessions') {
           title = t('📋 会话列表');
-          const listed = await this.#harness.listWorkspaceSessions(this.#harness.currentWorkspace(), options);
+          const workspace = await conversationSessionWorkspace(this.#harness, key, options);
+          const listed = await this.#harness.listWorkspaceSessions(workspace, options);
           entries = listed.sessions.map((session) => [
             `${session.sessionId === this.#state.sessionFor(key) ? '✓ ' : ''}${session.title || t('暂无标题')}`,
             `/session ${session.sessionId}`,

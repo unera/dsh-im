@@ -187,6 +187,12 @@ export default {
   '跟随默认': 'Follow default',
   '切换预设': 'Switch preset',
   '切换模型': 'Switch model',
+  '默认等级': 'Default effort',
+  '切换推理等级': 'Switch reasoning effort',
+  '第 {page}/{pages} 页 · 共 {total} 个模型': 'Page {page}/{pages} · {total} models',
+  '第一页': 'First page',
+  '最后一页': 'Last page',
+  '当前模型不可用：{model}': 'Current model is unavailable: {model}',
   '当前工作区暂无可用会话。': 'There are no available sessions in the current workspace.',
   '🤖 切换预设': '🤖 Switch preset',
   '🧠 切换模型': '🧠 Switch model',
@@ -401,6 +407,9 @@ export default {
   '任务失败': 'Failed',
   // feishu/bridge.mjs — step push context injection
   '📎 已注入会话上下文': '📎 Context injected',
+  // feishu/bridge.mjs — goal rounds opened outside the IM (issue #454)
+  '🔄 目标自动续跑': '🔄 Goal auto-continued',
+  '🔄 目标自动续跑（第 {round} 轮）': '🔄 Goal auto-continued (round {round})',
   // feishu/feishu-cards.mjs — question card answered state + custom entry (issue #162)
   '✏️ 其他答案…': '✏️ Other answer…',
   '✅ 已回答{progress}': '✅ Answered{progress}',

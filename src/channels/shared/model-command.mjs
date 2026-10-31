@@ -439,6 +439,11 @@ function modelErrorMessage(error, action) {
 
 async function boundSession(harness, state, key, options) {
   if (typeof state?.sessionFor !== 'function') return null;
+  // A DS Bot binding may exist before this IM chat has received a message.
+  // Resolve its current part rather than creating an unrelated IM session.
+  if (typeof harness?.resolveDsBotSession === 'function') {
+    await harness.resolveDsBotSession(key);
+  }
   const sessionId = state.sessionFor(key);
   if (typeof sessionId !== 'string' || !sessionId) return null;
   if (typeof harness?.workspaceSession !== 'function') {
