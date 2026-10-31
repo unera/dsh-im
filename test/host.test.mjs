@@ -13,6 +13,23 @@ const NO_CHANNELS = Object.freeze({
   applyIMessage: async () => {}, applyOffice: async () => {},
 });
 
+test('Host forwards its management authority to both general settings and updates', async () => {
+  for (const rpcAuthority of [undefined, 'trusted-host', 'loopback']) {
+    const seen = [];
+    const config = { rpcAuthority };
+    const internals = Object.fromEntries(CHANNELS.map(([, applyName]) => [applyName, async () => {}]));
+    Object.assign(internals, {
+      createDeliveryService: () => ({}),
+      installHostLanguage: () => undefined,
+      installUpdateRpc: (_ctx, options) => seen.push(['update', options?.authority]),
+      installInboundTtlRpc: (_ctx, options) => { assert.equal(options.config, config); seen.push(['settings', options.config.rpcAuthority]); },
+      installSidebarSettingsRpc: () => {}, installDeliveryRpc: () => {},
+    });
+    await createImHostPlugin(internals).apply({ connection: { fetch: {} } }, config);
+    assert.deepEqual(seen, [['update', rpcAuthority], ['settings', rpcAuthority]]);
+  }
+});
+
 test('Host resolves the bot message language before channels start and serves its RPC', async () => {
   const order = [];
   let resolved = false;
