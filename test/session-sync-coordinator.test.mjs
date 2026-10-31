@@ -693,6 +693,21 @@ async function scheduledTurn(coordinator, text, sessionId = 'session-1', turn = 
   await coordinator.whenIdle();
 }
 
+test('disabled saved targets never fall through to Session binding delivery', async (t) => {
+  const sends = [];
+  const service = targetService(sends, [{ channel: 'feishu', botId: 'bot-1', targetId: 't1' }]);
+  service.listSessionSyncTargets = async () => [];
+  service.deliverSessionText = async () => { sends.push('binding'); return { sent: true }; };
+  const coordinator = createSessionSyncCoordinator({
+    deliveryService: service,
+    loadSettings: settings({ deliverModelAnswers: true }),
+    logger: { warn() {} },
+  });
+  t.after(() => coordinator.close());
+  await scheduledTurn(coordinator, 'scheduled answer');
+  assert.deepEqual(sends, []);
+});
+
 test('a confirmed card is the answer: the coordinator sends no second copy', async (t) => {
   const rendered = [];
   const unregister = registerSessionSyncMirror({ channel: 'feishu', botId: 'bot-1' },

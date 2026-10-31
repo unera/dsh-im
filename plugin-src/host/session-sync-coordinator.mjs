@@ -122,11 +122,9 @@ export function createSessionSyncCoordinator({
     return state.settings;
   };
 
-  // A bot with any configured delivery target — enabled or not — keeps the old
-  // per-target workflow; a bot with none is delivered through its Session binding.
-  // Scoped per bot, not per host, so one bot's fine-grained targets never disable
-  // another bot's simple switches.
-  const botHasTargets = async (sessionId) => {
+  // Saved targets keep control of delivery even when all their sync switches
+  // are off; an empty sync list must not bypass them through the binding path.
+  const botHasSavedTargets = async (sessionId) => {
     try {
       const described = await deliveryService.describeConversation(sessionId);
       if (!described) return false;
@@ -153,10 +151,8 @@ export function createSessionSyncCoordinator({
     }));
   };
 
-  // Old path: the person configured targets for this bot, so delivery goes to the
-  // targets whose session sync is on, exactly as it did before the binding path.
-  const deliverToTargets = async (sessionId, text, phase, format, { turn = null, cardText = null } = {}) => {
-    const targets = await deliveryService.listSessionSyncTargets(sessionId);
+  // Saved sync targets and DS Bot bindings share the same card receipt path.
+  const deliverToTargets = async (sessionId, targets, text, phase, format, { turn = null, cardText = null } = {}) => {
     if (!Array.isArray(targets) || targets.length === 0) {
       logUndelivered(sessionId, phase, 'no-sync-targets');
       return false;
@@ -215,8 +211,11 @@ export function createSessionSyncCoordinator({
   };
 
   const deliver = async (sessionId, text, phase, format = 'plain', card = null) => {
-    if (await botHasTargets(sessionId)) {
-      return deliverToTargets(sessionId, text, phase, format, card ?? {});
+    // DS Bot bindings can supply sync targets without any saved delivery target,
+    // including after rollover when the persisted Session map is still stale.
+    const targets = await deliveryService.listSessionSyncTargets?.(sessionId) ?? [];
+    if (targets.length > 0 || await botHasSavedTargets(sessionId)) {
+      return deliverToTargets(sessionId, targets, text, phase, format, card ?? {});
     }
     return deliverToBinding(sessionId, text, phase, format);
   };

@@ -6,6 +6,9 @@ import { join } from 'node:path';
 import { FeishuHarnessBridge } from '../../../src/channels/feishu/bridge.mjs';
 import { StateStore } from '../../../src/channels/feishu/state-store.mjs';
 import { createSessionSyncCoordinator } from '../../../plugin-src/host/session-sync-coordinator.mjs';
+import { createDeliveryAdapter } from '../../../plugin-src/host/delivery-adapter.mjs';
+import { DeliveryService } from '../../../plugin-src/host/delivery-service.mjs';
+import { createSessionSyncTargetsFor } from '../../../plugin-src/host/session-sync-targets.mjs';
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const flush = async () => { for (let i = 0; i < 8; i++) await tick(); };
@@ -17,7 +20,11 @@ const scheduled = (turn = 1) => ({ ...user(turn), data: { ...user(turn).data, so
 const answer = (text = 'complete answer', turn = 1) => ({ type: 'assistant/message', seq: turn * 100 + 2, surfaceOp: 'append', data: { turn, step: 1, message: { content: [{ type: 'text', text }] } } });
 const end = (turn = 1, kind = 'completed') => ({ type: 'turn/end', seq: turn * 100 + 3, data: { turn, reason: { kind } } });
 
-async function fixture(t, { state, targets = [target], create, patch, history = [], sync = true, resolver, botId = 'bot-a', bridgeOptions = {} } = {}) {
+async function fixture(t, {
+  state, targets = [target], create, patch, history = [], sync = true, resolver,
+  botId = 'bot-a', bridgeOptions = {}, deliveryService: customDeliveryService,
+  settings = { mirrorUserInput: false, deliverModelAnswers: true },
+} = {}) {
   let listener;
   const controller = new AbortController();
   const creates = [], patches = [], texts = [], warnings = [], historyCalls = [], visible = new Map(), mirrors = new Map();
@@ -69,7 +76,7 @@ async function fixture(t, { state, targets = [target], create, patch, history = 
   // The coordinator sees the same configured targets the bridge mirrors into, so
   // both of its paths run here against the real card: the target path when this
   // bot has targets, the binding path when it has none.
-  const deliveryService = {
+  const deliveryService = customDeliveryService ?? {
     async describeConversation() {
       return targets.length > 0
         ? { channel: 'feishu', botId, conversationKey: 'oc_sync' }
@@ -95,7 +102,7 @@ async function fixture(t, { state, targets = [target], create, patch, history = 
     logger: { warn: (...args) => warnings.push(args) },
     // The shipped defaults mirror nothing, so a test that expects a delivered
     // answer has to be the reader who switched it on.
-    loadSettings: async () => ({ mirrorUserInput: false, deliverModelAnswers: true }),
+    loadSettings: async () => settings,
   }) : null;
   const close = () => { controller.abort(); coordinator?.close(); };
   t.after(close);
@@ -304,6 +311,56 @@ test('a bot without targets delivers its answer once through the Session binding
   assert.deepEqual(f.texts.map(r => r.slice(0, 2)), [['session', 'complete answer']]);
   assert.equal(f.texts[0][3], 'binding');
 });
+
+for (const scenario of ['current session', 'rolled-over session', 'failed card', 'switches off']) {
+  test(`a DS Bot without saved delivery targets: ${scenario}`, async t => {
+    const settings = { mirrorUserInput: false, deliverModelAnswers: scenario !== 'switches off' };
+    const bot = { id: 'ds-one', sessionId: 'session', parts: ['old-session'] };
+    const dsBot = {
+      status: async () => ({ state: 'ready', bots: [bot] }),
+      resolve: async () => bot,
+    };
+    const workspaces = {
+      has: botId => botId === 'bot-a',
+      listBotIds: () => ['bot-a'],
+      listDeliveryTargets: () => [],
+      listSessionSyncTargets: () => [],
+      listDsBotBindings: () => [{ botId: 'bot-a', conversationKey: 'p2p:ou_owner', dsBotId: bot.id }],
+    };
+    const stateFor = async () => ({ snapshot: () => ({ sessions: {
+      'p2p:ou_owner': scenario === 'rolled-over session' ? 'old-session' : 'session',
+    } }) });
+    const sends = [];
+    const service = new DeliveryService({ dsBot });
+    service.registerAdapter(createDeliveryAdapter({
+      channel: 'feishu', workspaces, dsBot, stateFor,
+      coreController: { sendProactiveText: async (...args) => { sends.push(args); return { sent: true }; } },
+    }));
+    const resolver = createSessionSyncTargetsFor({
+      channel: 'feishu', workspaces, stateForBotId: stateFor,
+      deliveryService: service, loadSettings: async () => settings,
+    });
+    const f = await fixture(t, {
+      targets: [], resolver, deliveryService: service, settings,
+      create: scenario === 'failed card' ? async () => { throw new Error('provider failure'); } : undefined,
+    });
+    for (const event of [start(), scheduled(), answer(), end()]) f.emit(event);
+    await f.drain();
+
+    if (scenario === 'failed card') {
+      assert.equal(sends.length, 1, 'a failed card receives exactly one text fallback');
+      assert.equal(sends[0][2], 'complete answer');
+      assert.equal(sends[0][3].format, 'plain');
+    } else if (scenario === 'switches off') {
+      assert.equal(f.creates.length, 0);
+      assert.deepEqual(sends, []);
+    } else {
+      assert.equal(f.creates.length, 1);
+      assert.ok([...f.visible.values()].some(text => text.includes('complete answer')));
+      assert.deepEqual(sends, [], 'the confirmed DS Bot card must not be duplicated as text');
+    }
+  });
+}
 
 test('two rapid surfaced turns have separate cards and retain both answers', async t => {
   const f = await fixture(t, { sync: false });
