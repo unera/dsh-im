@@ -765,6 +765,10 @@ export class FeishuHarnessBridge {
   #conversationRoutes = new Map();
   /** Goal rounds currently rendering into a bound conversation, by key. */
   #goalRounds = new Map();
+  // A goal round's user/message carries `source.kind === 'goal'` but no
+  // `data.turn`; the turn/start right before it does. Keep the latest start
+  // so the round can still be identified without inventing a turn.
+  #goalTurnStarts = new Map();
   #cardDataTimeoutMs;
   #requestTimeoutMs;
   /** When true, approval/question interactions render as Feishu cards (buttons). */
@@ -4512,10 +4516,17 @@ export class FeishuHarnessBridge {
   async #feedGoalRoundTurn(sessionId, event, imOwned = false) {
     if (this.#signal?.aborted) return;
     const type = event.type;
+    if (type === 'turn/start') {
+      const started = event.data?.turn;
+      if (Number.isSafeInteger(started)) {
+        this.#goalTurnStarts.set(sessionId, { turn: started, seq: event.seq });
+      }
+      return;
+    }
     if (type === 'user/message') {
       const source = event.data?.source;
       if (source?.kind !== 'goal' || imOwned) return;
-      const turn = event.data?.turn;
+      const turn = this.#goalRoundTurn(sessionId, event);
       if (!Number.isSafeInteger(turn) || this.#goalRoundsFor(sessionId, turn).length > 0) return;
       await this.#openGoalRounds(sessionId, turn, source.round);
       return;
@@ -4572,6 +4583,19 @@ export class FeishuHarnessBridge {
         await this.#sealGoalRound(round, reason);
       }
     }
+  }
+
+  /**
+   * The turn a goal round belongs to. Harness `user/message` events injected by
+   * the goal driver omit `data.turn`, so fall back to the turn/start that
+   * opened the turn immediately before it.
+   */
+  #goalRoundTurn(sessionId, event) {
+    const declared = event.data?.turn;
+    if (Number.isSafeInteger(declared)) return declared;
+    const started = this.#goalTurnStarts.get(sessionId);
+    if (!started || !validEventSeq(started.seq) || started.seq >= event.seq) return undefined;
+    return started.turn;
   }
 
   #goalRoundsFor(sessionId, turn = null) {

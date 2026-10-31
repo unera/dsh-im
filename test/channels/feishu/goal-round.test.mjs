@@ -10,12 +10,13 @@ const DM = 'p2p:ou_owner';
 const SESSION = 'session';
 const OTHER_SESSION = 'session-2';
 
-const goal = (round = 1, turn = 4, seq = 100 + turn) => ({
+// A real goal round's user/message carries no `data.turn`; only the
+// turn/start right before it does.
+const goal = (round = 1, seq = 100) => ({
   type: 'user/message',
   seq,
   surfaceOp: 'append',
   data: {
-    turn,
     source: { kind: 'goal', goalId: 'goal-1', revision: 1, round },
     content: [{
       type: 'text',
@@ -23,6 +24,7 @@ const goal = (round = 1, turn = 4, seq = 100 + turn) => ({
     }],
   },
 });
+const start = (turn = 4, seq = 99) => ({ type: 'turn/start', seq, data: { turn } });
 const tool = (turn = 4, seq = 102) => ({
   type: 'tool/call', seq, data: { turn, name: 'bash', arguments: '{"command":"ls"}' },
 });
@@ -125,7 +127,8 @@ const syncedTarget = { channel: 'feishu', botId: 'bot-a', openId: 'ou_owner', ta
 test('a goal round opened outside the IM shows its progress and result in the bound conversation', async t => {
   const f = await fixture(t);
 
-  f.emit(goal(1));
+  f.emit(start(4, 99));
+  f.emit(goal(1, 100));
   await f.drain();
 
   assert.equal(f.replies.length, 1, 'the round opens a card in the conversation');
@@ -153,14 +156,16 @@ test('a goal round opened outside the IM shows its progress and result in the bo
 test('each continuation round starts a new card and delivers its own result', async t => {
   const f = await fixture(t);
 
-  f.emit(goal(1, 4));
+  f.emit(start(4, 99));
+  f.emit(goal(1, 100));
   await f.drain();
   f.emit(answer('第一轮结果', 4));
   await f.drain();
   f.emit(end(4));
   await f.drain();
 
-  f.emit(goal(2, 5, 205));
+  f.emit(start(5, 200));
+  f.emit(goal(2, 205));
   await f.drain();
   f.emit(answer('第二轮结果', 5));
   await f.drain();
@@ -176,7 +181,8 @@ test('each continuation round starts a new card and delivers its own result', as
 test('a lost turn/end does not block the next round and closes the stale card', async t => {
   const f = await fixture(t);
 
-  f.emit(goal(1, 4));
+  f.emit(start(4, 99));
+  f.emit(goal(1, 100));
   await f.drain();
   f.emit(tool(4));
   await f.drain();
@@ -184,7 +190,8 @@ test('a lost turn/end does not block the next round and closes the stale card', 
   await f.drain();
   // The connection drops here: turn/end for turn 4 never arrives.
 
-  f.emit(goal(2, 5, 205));
+  f.emit(start(5, 200));
+  f.emit(goal(2, 205));
   await f.drain();
   f.emit(answer('第二轮结果', 5));
   await f.drain();
@@ -200,7 +207,8 @@ test('a lost turn/end does not block the next round and closes the stale card', 
 test('a synced DM does not suppress the group topic bound to the same session', async t => {
   const f = await fixture(t, { resolver: async () => [syncedTarget] });
 
-  f.emit(goal(1));
+  f.emit(start(4, 99));
+  f.emit(goal(1, 100));
   await f.drain();
 
   assert.equal(f.replies.length, 1, 'the topic still gets its own card');
@@ -215,7 +223,8 @@ test('the synced DM itself is not rendered twice', async t => {
     keys: [[DM, 'ou_owner', 'om-dm-1']],
   });
 
-  f.emit(goal(1));
+  f.emit(start(4, 99));
+  f.emit(goal(1, 100));
   await f.drain();
 
   assert.equal(f.replies.length, 0, 'the mirror owns the direct chat');
@@ -227,7 +236,8 @@ test('the synced DM itself is not rendered twice', async t => {
 test('rebinding the conversation stops the old round from writing into it', async t => {
   const f = await fixture(t);
 
-  f.emit(goal(1, 4));
+  f.emit(start(4, 99));
+  f.emit(goal(1, 100));
   await f.drain();
   f.emit(answer('旧会话半截答案', 4));
   await f.drain();
