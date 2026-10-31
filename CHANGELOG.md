@@ -6,6 +6,8 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 ## [Unreleased]
 
+## [5.9.1] - 2026-11-01
+
 ### Fixed / 修复
 
 - 邮件线程在只引用上一封的客户端（如 iOS Mail 只带一条 `References`）里会分裂：回信的 Message-ID 由发信时生成、从未登记，解析线程时认不出它，于是把该封当成新线程另开一个 Harness 会话。现在每次回信都把发信侧 Message-ID 登记回它所回复的线程，同一封邮件的往返始终留在同一个会话里。
@@ -16,6 +18,11 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 - 通用设置与插件更新统一沿用 `rpcAuthority`，修复已认证的 NAS／Docker 局域网访问被固定本机限制拒绝的问题；显式 `loopback` 仍限制本机访问。管理错误区分登录失效、访问拒绝、接口缺失与服务异常，保留现有更新确认和安装限制。（[#477](https://github.com/xmanrui/dsh-im/issues/477)）
   General settings and plugin updates now honor `rpcAuthority`, allowing authenticated, trusted LAN access on NAS/Docker deployments while retaining explicit `loopback` restrictions. Management errors distinguish authentication, access denial, missing APIs, and service failures. Existing update confirmation and installation restrictions are preserved. ([#477](https://github.com/xmanrui/dsh-im/issues/477))
+
+### Notes / 使用说明
+
+- 依赖声明、Node.js 要求及 DSH 兼容声明保持不变。升级后重启 Host 并刷新管理页面。
+  Dependency declarations, Node.js requirements and DSH compatibility declarations are unchanged. Restart the Host and refresh management pages after upgrading.
 
 ## [5.9.0] - 2026-10-31
 
@@ -2145,7 +2152,8 @@ Thanks to [@Dong09](https://github.com/Dong09) for the Matrix conversation-conte
 - 改进 npm 发布包结构，保留 CLI 入口并避免安装脚本拦截。
   Improved npm package contents to preserve the CLI entry point and avoid install-script blocking.
 
-[Unreleased]: https://github.com/xmanrui/dsh-im/compare/v5.9.0...HEAD
+[Unreleased]: https://github.com/xmanrui/dsh-im/compare/v5.9.1...HEAD
+[5.9.1]: https://github.com/xmanrui/dsh-im/compare/v5.9.0...v5.9.1
 [5.9.0]: https://github.com/xmanrui/dsh-im/compare/v5.8.0...v5.9.0
 [5.8.0]: https://github.com/xmanrui/dsh-im/compare/v5.7.0...v5.8.0
 [5.7.0]: https://github.com/xmanrui/dsh-im/compare/v5.6.0...v5.7.0
