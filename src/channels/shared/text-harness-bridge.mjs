@@ -212,6 +212,11 @@ export class TextHarnessBridge {
   // auto-steer lane; and the open coalescing windows awaiting their flush.
   #turnAuthors = new Map();
   #coalescing = new Map();
+  // Steering receipts per conversation key. The acknowledgement "instruction
+  // submitted" is a delivery notice, not part of the conversation: it is retired
+  // from the chat as soon as the corrected turn (or a background result) is
+  // about to deliver its answer, so the reader sees the result, not the receipt.
+  #steerReceipts = new Map();
   #autoSteerSameSender = false;
   #autoSteerLimit = 0;
   #coalesceWindowMs = 0;
@@ -944,6 +949,35 @@ export class TextHarnessBridge {
     await this.#deferred.whenIdle();
   }
 
+  /** Keep the message ids of a steering acknowledgement for one conversation. */
+  #rememberSteerReceipts(key, target, receipts) {
+    const messageIds = receipts.flatMap(receipt => providerMessageIdsFor(receipt));
+    if (messageIds.length === 0) return;
+    const pending = this.#steerReceipts.get(key) ?? [];
+    pending.push({ target, messageIds });
+    this.#steerReceipts.set(key, pending);
+  }
+
+  /** Retire the steering acknowledgements of one conversation, if the channel
+   *  can delete its own messages. Best-effort: a receipt that cannot be removed
+   *  must never cost the reader the answer that follows it. */
+  async #dropSteerReceipts(key) {
+    const pending = this.#steerReceipts.get(key);
+    if (pending === undefined) return;
+    this.#steerReceipts.delete(key);
+    if (typeof this.#bot.deleteText !== 'function') return;
+    for (const entry of pending) {
+      try {
+        await this.#bot.deleteText(entry.target, entry.messageIds);
+      } catch (error) {
+        this.#logger.warn?.(
+          `[dsh-im:${this.#descriptor.key}] unable to retire a steering acknowledgement:`,
+          error?.message ?? error,
+        );
+      }
+    }
+  }
+
   async #processFastCommand(message, messageId, key, runner, senderId) {
     if (this.#state.hasSeen(messageId)) return;
     await this.#state.markSeen(messageId);
@@ -988,9 +1022,11 @@ export class TextHarnessBridge {
           this.#approvals.closeRoute(key),
         ]);
       }
+      const receipts = [];
       for (const reply of result?.messages ?? [result?.message]) {
-        if (reply) await this.#bot.sendText(target, reply);
+        if (reply) receipts.push(await this.#bot.sendText(target, reply));
       }
+      if (result?.steered === true) this.#rememberSteerReceipts(key, target, receipts);
       this.#status.lastError = null;
     } catch (error) {
       if (error?.code === 'turn-stopped' || this.#signal?.aborted) {
@@ -1340,6 +1376,10 @@ export class TextHarnessBridge {
         },
       });
       stopKeepalive();
+      // The turn the steering acknowledgement announced is delivering its
+      // answer now: retire that receipt first, so the reader sees the result
+      // rather than the notice about it.
+      await this.#dropSteerReceipts(conversationKey);
       if (batchSubmission) {
         this.#batches.complete(conversationKey, batchSubmission.token);
       }

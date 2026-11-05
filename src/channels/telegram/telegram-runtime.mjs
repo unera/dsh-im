@@ -755,6 +755,31 @@ export class TelegramBotClient {
   }
 
   /**
+   * Delete the bot's own messages, used to retire a transient receipt before
+   * the answer lands. Telegram only allows deleting its own messages for 48
+   * hours, and a receipt that survives must never cost the reader the answer,
+   * so every failure stays local to this call.
+   */
+  async deleteText(target, messageIds) {
+    for (const candidate of Array.isArray(messageIds) ? messageIds : []) {
+      const messageId = Number.parseInt(candidate, 10);
+      if (!Number.isSafeInteger(messageId)) continue;
+      try {
+        await this.#api.deleteMessage({
+          chatId: target.chatId,
+          messageId,
+          signal: this.#signal,
+        });
+      } catch (error) {
+        this.#logger.warn?.(
+          '[dsh-im:telegram] unable to delete a transient message:',
+          error?.message ?? error,
+        );
+      }
+    }
+  }
+
+  /**
    * Deliver a card whose inline keyboard carries the interaction payloads.
    * Kept separate from sendText so a markup failure can be caught and degraded
    * to the plain-text flow by the caller without losing the text itself.

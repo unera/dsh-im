@@ -114,7 +114,9 @@ export async function runControlCommand(text, harness, state, key, {
   const steered = await steerMessage(instruction, harness, state, key, {
     signal, control, enhancement,
   });
+  // `steered` marks the receipt as a steering acknowledgement, so the bridge may
+  // retire it from the chat once the turn it corrected delivers its answer.
   return steered
-    ? commandResult(t('已提交补充指令，Agent 会在下一步读取。'))
+    ? commandResult(t('已提交补充指令，Agent 会在下一步读取。'), { steered: true })
     : commandResult(t('任务已结束，没有正在运行的任务，无法补充指令。请直接发送消息开始新任务。'));
 }
