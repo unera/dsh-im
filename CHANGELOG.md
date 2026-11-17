@@ -16,6 +16,9 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 ### Added / 新增
 
+- 投递失败通知带两个按钮：「重新发送」把没能送达的那条回复按原样再发一次，「删除」清掉这条通知本身。只在渠道支持内联键盘且失败类型是发送本身（`CHANNEL_DELIVERY_UNCERTAIN` / `CHANNEL_DELIVERY`）时出现；回复正文留在进程内存里（最多 20 条），所以 `callback_data` 不会超长，重启后按钮会提示「已失效」。重发再次失败时按钮保留，可以再按一次；成功后通知被改写成回执并清空键盘。
+  The delivery-failure notice carries two buttons: **Resend** sends the undelivered reply once more exactly as it was, **Delete** removes the notice itself. They appear only where the channel has an inline keyboard and the failure is the send itself (`CHANNEL_DELIVERY_UNCERTAIN` / `CHANNEL_DELIVERY`); the reply body is kept in process memory (at most 20 notices), so `callback_data` stays short, and after a restart a press reports that the notice is no longer valid. A resend that fails again keeps both buttons pressable; a successful one rewrites the notice into a receipt and clears the keyboard.
+
 - 新增 `/sessionarchive <Session ID>`（别名 `/sessarchive`）：通过 Discord 等渠道触发 DSH 的会话归档（`workspace.archiveSession`）。传序号只做预览（标题、工作区、ID），不会执行归档——会话列表随新会话出现而位移，按序号直接归档会归档到错误会话；破坏性操作必须点名完整 ID。机器人只负责解析目标并转达 Host 结果，拒绝归档本对话当前绑定的会话与已归档会话；`--stop` 让 Host 先停止该会话正在运行的任务。归档后的会话不再出现在默认的 `/sessionlist`。
   Added `/sessionarchive <Session ID>` (alias `/sessarchive`) to trigger DSH Session archiving; a numerical argument only previews the Session behind that index (title, workspace, ID) and never archives, because the list shifts and archiving by index would hit the wrong Session — destructive actions must name the full ID (`workspace.archiveSession`) from the chat. The bot only resolves the target and relays the Host result; it refuses the Session this chat is bound to and one that is already archived, and `--stop` lets the Host stop that Session's running work. Archived Sessions leave the default `/sessionlist`.
 

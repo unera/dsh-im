@@ -197,6 +197,26 @@ const PENDING_RESTART_NOTICE = '排队中的消息在服务重启时被中断。
 // nonce of the preview message the bot must delete when pressed.
 const TAIL_HIDE_CALLBACK_PREFIX = 'tailhide|';
 
+// Callback namespace for the two buttons of a delivery-failure notice:
+// `fnote|<nonce>|r` resends the lost reply, `fnote|<nonce>|d` deletes the notice
+// itself. The reply body never travels in `callback_data` (Telegram caps it at
+// 64 bytes); the nonce keys the in-memory table below.
+const FAILURE_NOTICE_CALLBACK_PREFIX = 'fnote|';
+const FAILURE_NOTICE_ACTIONS = Object.freeze({ resend: 'r', delete: 'd' });
+/** How many unread failure notices keep their reply body in memory. */
+const MAX_FAILURE_NOTICES = 20;
+
+function failureNoticeCallbackData(nonce, action) {
+  return `${FAILURE_NOTICE_CALLBACK_PREFIX}${nonce}|${action}`;
+}
+
+function parseFailureNoticeCallback(data) {
+  if (typeof data !== 'string' || !data.startsWith(FAILURE_NOTICE_CALLBACK_PREFIX)) return null;
+  const [nonce, action] = data.slice(FAILURE_NOTICE_CALLBACK_PREFIX.length).split('|');
+  if (!nonce || !Object.values(FAILURE_NOTICE_ACTIONS).includes(action)) return null;
+  return { nonce, action };
+}
+
 export class TextHarnessBridge {
   #descriptor;
   #bot;
@@ -232,6 +252,9 @@ export class TextHarnessBridge {
   // /tail preview messages by nonce, so the "Hide" press can delete the bot's
   // own preview message. Keyed by nonce → { target, providerMessageId }.
   #tailPreviewMessages = new Map();
+  // Delivery-failure notices by nonce → { target, messageId, markup, retry },
+  // so the "Resend" press can replay a reply the channel never confirmed.
+  #failureNotices = new Map();
   // Optional channel-supplied approval card controller (see HarnessApprovalQueue's
   // render hook). Null keeps every channel's existing plain-text approval flow.
   #approvalCard;
@@ -1128,6 +1151,10 @@ export class TextHarnessBridge {
     // running tool call. Declared outside the try so every exit path (including
     // pre-prompt failures like image parsing) clears the timer.
     let keepaliveTimer = null;
+    // The reply this turn produced, kept outside the try so the failure handler
+    // can offer "Resend" when the channel never confirmed the send. Set right
+    // before the answer goes out; null until then and for turns with no answer.
+    let undeliveredReply = null;
     const stopKeepalive = () => {
       if (keepaliveTimer !== null) clearInterval(keepaliveTimer);
       keepaliveTimer = null;
@@ -1479,6 +1506,9 @@ export class TextHarnessBridge {
         ? t(FILE_ONLY_COMPLETION_TEXT)
         : answer;
       const answerFormat = fileOnlyCompletion ? 'plain' : 'markdown';
+      undeliveredReply = cleanText(visibleAnswer)
+        ? { text: visibleAnswer, format: answerFormat }
+        : null;
       let textDeliveryError = null;
       let textReceipt = null;
       // What the channel observed about the send itself; it is written to the
@@ -1652,8 +1682,13 @@ export class TextHarnessBridge {
         return error.deliveryReceipt;
       }
       stream?.cancel?.();
+      // A reply whose send failed (or was never confirmed) still has a known
+      // body: offer it back with "Resend"/"Delete" instead of a dead notice.
+      const lostReply = ['CHANNEL_DELIVERY_UNCERTAIN', 'CHANNEL_DELIVERY'].includes(failure.code)
+        ? undeliveredReply
+        : null;
       try {
-        await this.#bot.sendText(target, failureText);
+        await this.#sendFailureNotice(target, failureText, lostReply);
       } catch (sendError) {
         this.#logger.error?.(
           `[dsh-im:${this.#descriptor.key}] failed to send the safe error reply:`,
@@ -1941,6 +1976,10 @@ export class TextHarnessBridge {
     if (!conversationId || !senderId || !messageId || callback?.senderIsBot === true) return;
     const kind = callback.kind === 'group' ? 'group' : 'direct';
     const key = `${kind}:${conversationId}`;
+    // A delivery-failure notice is a stateless card about a reply that failed to
+    // send: route its namespace before any interaction bookkeeping.
+    const failurePress = parseFailureNoticeCallback(callback?.data);
+    if (failurePress) return this.#handleFailureNoticePress(callback, failurePress);
     // The /tail preview "Hide" button is a stateless delete of the bot's own
     // message; route its namespace before any interaction bookkeeping.
     if (typeof callback?.data === 'string' && callback.data.startsWith(TAIL_HIDE_CALLBACK_PREFIX)) {
@@ -2107,6 +2146,122 @@ export class TextHarnessBridge {
     } catch (error) {
       this.#logger.warn?.(
         `[dsh-im:${this.#descriptor.key}] unable to delete a /tail preview:`,
+        error?.message ?? error,
+      );
+    }
+  }
+
+  /**
+   * Send the "reply could not be delivered" notice, with "Resend"/"Delete"
+   * buttons when the channel carries inline keyboards and the lost reply is
+   * known. Every other case keeps the plain notice, so nothing is removed for
+   * a channel without buttons.
+   */
+  async #sendFailureNotice(target, text, lostReply) {
+    const cardCapable = Boolean(lostReply?.text)
+      && buttonPreviewSupported(this.#descriptor.key, this.#bot);
+    if (!cardCapable) {
+      await this.#bot.sendText(target, text);
+      return;
+    }
+    const nonce = createActionNonce(6);
+    const markup = {
+      inline_keyboard: [[
+        {
+          text: t('重新发送'),
+          callback_data: failureNoticeCallbackData(nonce, FAILURE_NOTICE_ACTIONS.resend),
+        },
+        {
+          text: t('删除'),
+          callback_data: failureNoticeCallbackData(nonce, FAILURE_NOTICE_ACTIONS.delete),
+        },
+      ]],
+    };
+    let sent;
+    try {
+      sent = await this.#bot.sendInteractionCard(target, { text, markup });
+    } catch (error) {
+      this.#logger.warn?.(
+        `[dsh-im:${this.#descriptor.key}] unable to send the failure notice card; falling back to text:`,
+        error?.message ?? error,
+      );
+      await this.#bot.sendText(target, text);
+      return;
+    }
+    const messageId = Array.isArray(sent?.providerMessageIds) && sent.providerMessageIds.length > 0
+      ? String(sent.providerMessageIds[0])
+      : undefined;
+    if (!messageId) return;
+    while (this.#failureNotices.size >= MAX_FAILURE_NOTICES) {
+      this.#failureNotices.delete(this.#failureNotices.keys().next().value);
+    }
+    this.#failureNotices.set(nonce, { target, messageId, markup, retry: lostReply });
+  }
+
+  /** Resend a lost reply, or delete the notice about it. Best-effort. */
+  async #handleFailureNoticePress(callback, press) {
+    const entry = this.#failureNotices.get(press.nonce);
+    if (!entry) return this.#answerInteractionCallback(callback, t('这条通知已失效。'));
+    if (press.action === FAILURE_NOTICE_ACTIONS.delete) {
+      this.#failureNotices.delete(press.nonce);
+      await this.#answerInteractionCallback(callback, t('已删除。'));
+      if (typeof this.#bot.deleteMessage !== 'function') return;
+      try {
+        await this.#bot.deleteMessage(entry.target, entry.messageId);
+      } catch (error) {
+        this.#logger.warn?.(
+          `[dsh-im:${this.#descriptor.key}] unable to delete a failure notice:`,
+          error?.message ?? error,
+        );
+      }
+      return;
+    }
+    // The acknowledgement is the first round-trip: it stops the client-side
+    // spinner, and the resend itself can take a while.
+    await this.#answerInteractionCallback(callback, t('正在重新发送…'));
+    let receipt = null;
+    try {
+      receipt = typeof this.#bot.sendDelivery === 'function'
+        ? await this.#bot.sendDelivery(
+          entry.target,
+          createTextDeliveryBlock(entry.retry.text, entry.retry.format),
+        )
+        : await this.#bot.sendText(entry.target, entry.retry.text);
+    } catch (error) {
+      this.#logger.warn?.(
+        `[dsh-im:${this.#descriptor.key}] resending a lost reply failed:`,
+        error?.message ?? error,
+      );
+    }
+    const resent = Boolean(receipt)
+      && receipt?.deliveryOutcome !== 'failed'
+      && receipt?.deliveryOutcome !== 'unknown';
+    if (!resent) {
+      // Keep both buttons: a second press may still land, and the body is intact.
+      if (typeof this.#bot.editInteractionCard !== 'function') return;
+      try {
+        await this.#bot.editInteractionCard(entry.target, entry.messageId, {
+          text: t('再次发送失败，稍后再试。'),
+          markup: entry.markup,
+        });
+      } catch (error) {
+        this.#logger.warn?.(
+          `[dsh-im:${this.#descriptor.key}] unable to mark a failed resend:`,
+          error?.message ?? error,
+        );
+      }
+      return;
+    }
+    this.#failureNotices.delete(press.nonce);
+    if (typeof this.#bot.editInteractionCard !== 'function') return;
+    try {
+      await this.#bot.editInteractionCard(entry.target, entry.messageId, {
+        text: t('已重新发送。'),
+        markup: { inline_keyboard: [] },
+      });
+    } catch (error) {
+      this.#logger.warn?.(
+        `[dsh-im:${this.#descriptor.key}] unable to confirm a resend:`,
         error?.message ?? error,
       );
     }
