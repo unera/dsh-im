@@ -1,5 +1,13 @@
 # Changelog / 更新日志
 
+## [5.10.2] - 2026-11-17
+### Fixed
+- **`<` and `>` are escaped the way the parser reads them, not as HTML entities.** The rich
+  markdown path replaced them with `&lt;`/`&gt;` and `&` with `&amp;`, and nothing in the chain
+  decodes entities — Telegram showed them literally, so `<dsh_say>` arrived as `&lt;dsh_say&gt;`
+  and `?a=1&b=2` as `?a=1&amp;b=2`. They are now written as `\<` and `\>`, which is markdown's
+  way of saying "a character, not a tag", and `&` is left alone.
+
 本文件记录 dsh-im 各正式版本的重要变化。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
 This file records the notable changes in each dsh-im release. Its format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and its versions follow [Semantic Versioning](https://semver.org/).
