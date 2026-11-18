@@ -253,7 +253,8 @@ function telegramReplyReference(message, { quote, loadReplyContent } = {}) {
     );
   const content = typeof message?.text === 'string'
     ? message.text : typeof message?.caption === 'string'
-      ? message.caption : typeof quote?.text === 'string' ? quote.text : '';
+      ? message.caption : typeof quote?.text === 'string' ? quote.text
+        : telegramServiceText(quote?.rich_message) ?? '';
   const attachments = telegramReplyAttachments(message);
   const messageId = Number.isSafeInteger(message?.message_id)
     ? String(message.message_id) : undefined;
@@ -407,6 +408,10 @@ const TELEGRAM_CONTENT_FIELDS = Object.freeze([
   'animation', 'sticker', 'location', 'contact', 'poll', 'dice', 'venue',
   'paid_media', 'invoice', 'successful_payment', 'story', 'giveaway',
   'users_shared', 'chat_shared',
+  // Telegram's block-based text: a message can arrive as blocks instead of `text`, and without
+  // this entry a person's paragraph is reported as an unknown service event with its content
+  // dropped — the message simply never arrives.
+  'rich_message',
 ]);
 
 // Keys that describe the envelope rather than the event; they are noise in the
@@ -649,8 +654,12 @@ export function normalizeTelegramUpdate(update, {
     conversationId,
     content: service
       ? telegramServicePrompt(service)
-      : withoutBotMention(message.text ?? message.caption ?? '', username),
-    plainText: Boolean(service) || typeof message.text === 'string',
+      : withoutBotMention(
+        message.text ?? message.caption ?? telegramServiceText(message.rich_message, 4000) ?? '',
+        username,
+      ),
+    plainText: Boolean(service) || typeof message.text === 'string'
+      || typeof message.rich_message === 'object',
     images: image ? [image] : [],
     files: file ? [file] : [],
     ...(voice ? { voice } : {}),
