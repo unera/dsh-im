@@ -1940,6 +1940,15 @@ export class HarnessClient {
     return imageInputLimits(await this.#imageInputPolicy());
   }
 
+  /**
+   * A prompt id in this client's own format, for callers that have to know the
+   * id before they call ask(): pass it back as `options.promptRpcId` and the
+   * same string keys the durable `user/message` in the Session ledger.
+   */
+  newPromptRpcId() {
+    return `${this.#rpcIdPrefix}-${randomUUID()}`;
+  }
+
   async ask(sessionId, prompt, options = {}) {
     if (typeof options === 'number') options = { timeoutMs: options };
     const diagnostic = { stage: 'prompt.prepare', submissionState: 'not-submitted', sessionId };
@@ -2018,7 +2027,13 @@ export class HarnessClient {
       { signal },
     );
     const baselineSeq = Math.max(-1, ...(before.events ?? []).map(({ event }) => event.seq ?? -1));
-    const promptRpcId = transferredPromptRpcId ?? `${this.#rpcIdPrefix}-${randomUUID()}`;
+    // A caller may name its prompt up front (`options.promptRpcId`), so the id is
+    // known before the reply exists: a retry button can carry it and later find
+    // this prompt's turn in the Session ledger. Same shape as the default id.
+    const promptRpcId = transferredPromptRpcId
+      ?? (typeof options.promptRpcId === 'string' && options.promptRpcId
+        ? options.promptRpcId
+        : `${this.#rpcIdPrefix}-${randomUUID()}`);
     diagnostic.promptRpcId = promptRpcId;
     const releasePromptInputOrigin = registerImInputOrigin(this.#interactionRegistry, promptRpcId);
     const tracker = new HarnessReplyTracker({

@@ -76,6 +76,7 @@ import {
   setLastMessageFailure,
 } from './message-failure.mjs';
 import { logDeliveryFailure } from './delivery-failure-log.mjs';
+import { recoverAssistantTextByPromptRpcId } from './session-reply-recovery.mjs';
 import { beginStatusReaction } from './status-reaction.mjs';
 import { startNewConversation, isNewCommand, newCommandTitle } from './new-command.mjs';
 import {
@@ -216,6 +217,16 @@ function parseFailureNoticeCallback(data) {
   if (!nonce || !Object.values(FAILURE_NOTICE_ACTIONS).includes(action)) return null;
   return { nonce, action };
 }
+
+// Callback namespace for the "resend this turn" button that rides on every
+// cadence frame: `cad|<promptRpcId>`. The prompt id is the durable identity of
+// the `user/message` that opened the turn, so a press resolves the turn from the
+// Session ledger alone — no memory, no restart dependency. Telegram caps
+// `callback_data` at 64 bytes, which is why the id is a caller-chosen prompt id
+// (`im-<uuid>`) and not a free-form payload.
+const TURN_RETRY_CALLBACK_PREFIX = 'cad|';
+/** Longest prompt id that still leaves room for the prefix in 64 bytes. */
+const MAX_TURN_RETRY_PROMPT_ID = 56;
 
 export class TextHarnessBridge {
   #descriptor;
@@ -1284,9 +1295,21 @@ export class TextHarnessBridge {
         this.#logger.warn?.(`[dsh-im:${this.#descriptor.key}] typing indicator failed:`, error);
       });
       let streamFinished = false;
+      // The prompt id the cadence frames will carry; null when this turn has no
+      // retry button, and then ask() names the prompt itself as before.
+      let retryPromptId = null;
       if (this.#thinkingTraces && typeof this.#bot.openThinkingStream === 'function') {
+        // The trace frames outlive a delivery failure: when the send of the
+        // answer never lands, the last frame is all the reader sees. Name the
+        // prompt here, before it is submitted, so a "resend this turn" button
+        // can ride on every frame and find this turn's answer later — from the
+        // Session ledger, not from memory that a restart would empty.
+        retryPromptId = this.#retryPromptId();
         try {
-          stream = await this.#bot.openThinkingStream(this.#turnDeliveryTarget(target, conversationKey));
+          stream = await this.#bot.openThinkingStream(
+            this.#turnDeliveryTarget(target, conversationKey),
+            retryPromptId ? { traceMarkup: this.#turnRetryMarkup(retryPromptId) } : undefined,
+          );
           thinkingStream = true;
         } catch (error) {
           stream = null;
@@ -1437,6 +1460,9 @@ export class TextHarnessBridge {
         askOptions: {
           groupHistory: message.groupHistory,
           timeoutMs: this.#replyTimeoutMs,
+          // Named up front only when the cadence frames carry its button;
+          // otherwise the Harness picks the id as it always did.
+          ...(retryPromptId ? { promptRpcId: retryPromptId } : {}),
           signal: this.#signal,
           control: { owner: this, key: conversationKey },
           // Thinking mode needs every update (reasoning + tool calls) in
@@ -1980,6 +2006,13 @@ export class TextHarnessBridge {
     // send: route its namespace before any interaction bookkeeping.
     const failurePress = parseFailureNoticeCallback(callback?.data);
     if (failurePress) return this.#handleFailureNoticePress(callback, failurePress);
+    // A cadence frame's "resend this turn" button is also stateless: its payload
+    // is the prompt id whose turn the Session ledger can still resolve.
+    if (typeof callback?.data === 'string' && callback.data.startsWith(TURN_RETRY_CALLBACK_PREFIX)) {
+      const promptRpcId = cleanText(callback.data.slice(TURN_RETRY_CALLBACK_PREFIX.length));
+      if (!promptRpcId) return this.#answerInteractionCallback(callback, t('这个按钮已失效。'));
+      return this.#handleTurnRetryPress(callback, key, promptRpcId);
+    }
     // The /tail preview "Hide" button is a stateless delete of the bot's own
     // message; route its namespace before any interaction bookkeeping.
     if (typeof callback?.data === 'string' && callback.data.startsWith(TAIL_HIDE_CALLBACK_PREFIX)) {
@@ -2262,6 +2295,102 @@ export class TextHarnessBridge {
     } catch (error) {
       this.#logger.warn?.(
         `[dsh-im:${this.#descriptor.key}] unable to confirm a resend:`,
+        error?.message ?? error,
+      );
+    }
+  }
+
+  /**
+   * The prompt id this turn will be submitted under, or null when the turn
+   * carries no retry button (channel without buttons, no thinking cadence, or a
+   * Harness that cannot take a caller-chosen id).
+   */
+  #retryPromptId() {
+    if (typeof this.#harness?.newPromptRpcId !== 'function') return null;
+    if (!buttonPreviewSupported(this.#descriptor.key, this.#bot)) return null;
+    const id = this.#harness.newPromptRpcId();
+    return typeof id === 'string' && id.length <= MAX_TURN_RETRY_PROMPT_ID ? id : null;
+  }
+
+  /** The one-button keyboard that rides on each cadence frame of a turn. */
+  #turnRetryMarkup(promptRpcId) {
+    return {
+      inline_keyboard: [[{
+        text: t('重新发送这一轮的答复'),
+        callback_data: `${TURN_RETRY_CALLBACK_PREFIX}${promptRpcId}`,
+      }]],
+    };
+  }
+
+  /**
+   * Resend the answer of the turn whose cadence frame was pressed.
+   *
+   * The frame carries only the prompt id, so the answer is resolved from the
+   * Session ledger: `pending` means the turn has not ended and pressing again
+   * later is the intended retry. Without a payload in `callback_data`, this
+   * works after a restart and needs no table in memory.
+   */
+  async #handleTurnRetryPress(callback, conversationKey, promptRpcId) {
+    const target = callback.replyTarget;
+    if (!target) return this.#answerInteractionCallback(callback, t('这条会话已失效。'));
+    await this.#answerInteractionCallback(callback, t('正在查找这一轮的答复…'));
+    const sessionId = this.#state.sessionFor(conversationKey);
+    const session = typeof sessionId === 'string' && sessionId
+      && typeof this.#harness?.workspaceSession === 'function'
+      ? this.#harness.workspaceSession(sessionId, conversationKey)
+      : null;
+    let state;
+    try {
+      state = await recoverAssistantTextByPromptRpcId({
+        session,
+        promptRpcId,
+        signal: this.#signal,
+      });
+    } catch (error) {
+      this.#logger.warn?.(
+        `[dsh-im:${this.#descriptor.key}] unable to read the turn behind a cadence button:`,
+        error?.message ?? error,
+      );
+      await this.#bot.sendText(target, t('暂时无法读取这一轮的答复，请稍后再试。')).catch(() => undefined);
+      return;
+    }
+    if (state.status === 'pending') {
+      await this.#bot.sendText(target, t('这一轮还在进行中，等它结束后再按一次。')).catch(() => undefined);
+      return;
+    }
+    if (state.status !== 'ready' || !cleanText(state.text)) {
+      await this.#bot.sendText(target, t('这一轮没有可用的文字答复。')).catch(() => undefined);
+      return;
+    }
+    let receipt = null;
+    try {
+      receipt = typeof this.#bot.sendDelivery === 'function'
+        ? await this.#bot.sendDelivery(target, createTextDeliveryBlock(state.text, 'markdown'))
+        : await this.#bot.sendText(target, state.text);
+    } catch (error) {
+      this.#logger.warn?.(
+        `[dsh-im:${this.#descriptor.key}] resending a turn from its cadence frame failed:`,
+        error?.message ?? error,
+      );
+    }
+    const resent = Boolean(receipt)
+      && receipt?.deliveryOutcome !== 'failed'
+      && receipt?.deliveryOutcome !== 'unknown';
+    if (!resent) {
+      // The button stays: a second press may land, and the answer is intact.
+      await this.#bot.sendText(target, t('再次发送失败，稍后再试。')).catch(() => undefined);
+      return;
+    }
+    const messageId = cleanText(callback.messageId);
+    if (!messageId || typeof this.#bot.updateInteractionCard !== 'function') return;
+    // The answer is out, so the frame no longer needs its button.
+    try {
+      await this.#bot.updateInteractionCard(target, messageId, {
+        markup: { inline_keyboard: [] },
+      });
+    } catch (error) {
+      this.#logger.warn?.(
+        `[dsh-im:${this.#descriptor.key}] unable to clear a used cadence button:`,
         error?.message ?? error,
       );
     }

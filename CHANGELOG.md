@@ -16,6 +16,9 @@ This file records the notable changes in each dsh-im release. Its format follows
 
 ### Added / 新增
 
+- 思考链（cadence）的每一帧带一个「重新发送这一轮的答复」按钮：发送答案时连接已经断了的话，最后一帧是用户唯一看到的东西，而失败通知本身也发不出去——所以按钮必须在那之前就在。按钮只带 `promptRpcId`（`callback_data` 因此只有 44 字节），按下时去会话账本里找 `user/message` 的那一轮，再取该轮的 `assistant/message`：因此重启后依然可用，不需要任何内存表。轮次还没结束时按下只会提示「这一轮还在进行中」，等结束后再按；答案确实送达后按钮会被摘掉，发送失败或结果未知时按钮保留。
+  Every thinking-trace cadence frame carries a **"Send the answer"** button. When the connection is already gone while the answer is being sent, the last frame is all the reader sees and the failure notice itself cannot be delivered — so the button has to be there beforehand. It carries only the `promptRpcId` (44 bytes of `callback_data`), and a press resolves the turn from the Session ledger (`user/message` with that id → that turn's `assistant/message`), so it still works after a restart and needs no table in memory. Pressed mid-turn it only reports that the turn is still running; once the answer is confirmed delivered the button is removed, while a failed or unconfirmed send keeps it.
+
 - 投递失败通知带两个按钮：「重新发送」把没能送达的那条回复按原样再发一次，「删除」清掉这条通知本身。只在渠道支持内联键盘且失败类型是发送本身（`CHANNEL_DELIVERY_UNCERTAIN` / `CHANNEL_DELIVERY`）时出现；回复正文留在进程内存里（最多 20 条），所以 `callback_data` 不会超长，重启后按钮会提示「已失效」。重发再次失败时按钮保留，可以再按一次；成功后通知被改写成回执并清空键盘。
   The delivery-failure notice carries two buttons: **Resend** sends the undelivered reply once more exactly as it was, **Delete** removes the notice itself. They appear only where the channel has an inline keyboard and the failure is the send itself (`CHANNEL_DELIVERY_UNCERTAIN` / `CHANNEL_DELIVERY`); the reply body is kept in process memory (at most 20 notices), so `callback_data` stays short, and after a restart a press reports that the notice is no longer valid. A resend that fails again keeps both buttons pressable; a successful one rewrites the notice into a receipt and clears the keyboard.
 

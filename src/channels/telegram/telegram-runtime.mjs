@@ -1486,8 +1486,13 @@ export class TelegramBotClient {
    * Telegram message (no placeholder editing), so the user watches the
    * "think → act" chain build up. Trace lines are best-effort; the final
    * answer must still land, falling back to plain sendText delivery.
+   *
+   * `traceMarkup` puts one keyboard on the cadence: the newest frame carries it
+   * and the frame it replaces is disarmed. When the answer never lands the last
+   * frame is all the reader has, so the button that can bring the answer back
+   * must have been there before the connection went away.
    */
-  openThinkingStream(target) {
+  openThinkingStream(target, { traceMarkup = null } = {}) {
     const client = this;
     const providerMessageIds = [];
     let firstMessageId = null;
@@ -1504,18 +1509,43 @@ export class TelegramBotClient {
     const warnFailure = (label, error) => {
       logger?.warn?.(`[dsh-im:telegram] thinking stream ${label} failed:`, error);
     };
+    // The frame currently carrying the retry keyboard, so the next frame can
+    // take it over instead of leaving a button behind on every line.
+    let markupMessageId = null;
+    const clearMarkup = async (messageId) => {
+      if (!traceMarkup || !Number.isSafeInteger(messageId)) return;
+      try {
+        await this.#api.editMessageReplyMarkup({
+          chatId: target.chatId,
+          messageId,
+          replyMarkup: { inline_keyboard: [] },
+          signal: this.#signal,
+        });
+      } catch (error) {
+        // A keyboard that is already gone is the desired end state.
+        if (!isMessageNotModified(error)) warnFailure('keyboard cleanup', error);
+      }
+    };
     const sendLine = async (text) => {
       const message = await this.#api.sendMessage({
         chatId: target.chatId,
         text,
         replyToMessageId: firstMessageId === null ? target.replyToMessageId : undefined,
         messageThreadId: target.messageThreadId,
+        ...(traceMarkup ? { replyMarkup: traceMarkup } : {}),
         signal: this.#signal,
       });
       const id = message?.message_id;
       if (Number.isSafeInteger(id)) {
         if (firstMessageId === null) firstMessageId = id;
         providerMessageIds.push(String(id));
+        if (traceMarkup) {
+          const previous = markupMessageId;
+          markupMessageId = id;
+          // Best-effort: two armed frames at once would be harmless, so a failed
+          // cleanup never blocks the frame it belongs to.
+          if (previous !== null) void clearMarkup(previous);
+        }
       }
     };
     const deliver = async (label, text) => {
@@ -1524,6 +1554,16 @@ export class TelegramBotClient {
       } catch (error) {
         warnFailure(label, error);
       }
+    };
+    /**
+     * Retire the retry keyboard once the answer is confirmed delivered. A failed
+     * or unconfirmed send keeps it: the whole point of the button is the turn
+     * whose answer never arrived.
+     */
+    const disarmCadence = async () => {
+      const messageId = markupMessageId;
+      markupMessageId = null;
+      if (messageId !== null) await clearMarkup(messageId);
     };
     // Trace sends run in the background: the window timer starts one and nobody
     // awaits it, so finish() would otherwise find an empty buffer and let the
@@ -1668,6 +1708,7 @@ export class TelegramBotClient {
             // Regular-text chunks already retain the original whitespace.
             const fallback = await client.sendText(target, chunks.slice(index).join(''));
             remember(fallback.providerMessageIds);
+            await disarmCadence();
             return deliveryResult('telegram-thinking', providerMessageIds);
           } catch (error) {
             const failure = telegramFailure(error);
@@ -1675,11 +1716,15 @@ export class TelegramBotClient {
             return deliveryResult('telegram-thinking', providerMessageIds, failure.outcome, failure.reason);
           }
         }
+        await disarmCadence();
         return deliveryResult('telegram-thinking', providerMessageIds);
       },
       cancel() {
         closed = true;
         // A cancelled turn must not leave a timer that sends a stale frame.
+        // The retry keyboard stays on purpose: the bridge cancels the stream on
+        // the same failure path that leaves the answer undelivered, and that is
+        // exactly when the button is the reader's only way back.
         clearWindowTimer();
         held = null;
       },

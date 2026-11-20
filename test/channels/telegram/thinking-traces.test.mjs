@@ -668,3 +668,74 @@ test('E1: an explicit thinkingTraces=false is persisted and reported, absent mea
   assert.equal(on.bots[0].thinkingTraces, true);
   assert.equal(configStore.get(botId).thinkingTraces, true);
 });
+
+// --- A15: the retry keyboard rides on the newest cadence frame --------------
+
+test('A15: the newest cadence frame carries the retry keyboard and the older one loses it', async () => {
+  const sent = [];
+  const markups = [];
+  const api = {
+    sendMessage: async (params) => { sent.push(params); return { message_id: 8500 + sent.length }; },
+    editMessageReplyMarkup: async (params) => { markups.push(params); return true; },
+    sendRichMessage: async () => ({ message_id: 9500 }),
+  };
+  const client = new TelegramBotClient({ api, signal: undefined, logger: quietLogger });
+  const traceMarkup = { inline_keyboard: [[{ text: '🔄', callback_data: 'cad|im-1' }]] };
+  const stream = client.openThinkingStream({ chatId: 42 }, { traceMarkup });
+
+  await stream.sendThinking('first thought');
+  await stream.sendThinking('second thought');
+
+  assert.equal(sent[0].replyMarkup, traceMarkup, 'the first frame is armed');
+  assert.equal(sent[1].replyMarkup, traceMarkup, 'the newest frame is armed too');
+  assert.equal(markups.length, 1, 'the frame it replaced is disarmed');
+  assert.equal(markups[0].messageId, 8501);
+  assert.deepEqual(markups[0].replyMarkup, { inline_keyboard: [] });
+
+  const result = await stream.finish({ text: 'ответ', format: 'markdown' });
+  assert.equal(result.deliveryOutcome, 'sent');
+  assert.equal(markups.at(-1).messageId, 8502, 'a delivered answer retires the button');
+  assert.deepEqual(markups.at(-1).replyMarkup, { inline_keyboard: [] });
+});
+
+test('A16: an unconfirmed answer keeps the retry keyboard', async () => {
+  const sent = [];
+  const markups = [];
+  const api = {
+    sendMessage: async (params) => { sent.push(params); return { message_id: 8600 + sent.length }; },
+    editMessageReplyMarkup: async (params) => { markups.push(params); return true; },
+    sendRichMessage: async () => {
+      const error = new Error('the send was never confirmed');
+      error.code = 'telegram-timeout';
+      throw error;
+    },
+    editMessageText: async () => { throw new Error('offline'); },
+  };
+  const client = new TelegramBotClient({ api, signal: undefined, logger: quietLogger });
+  const traceMarkup = { inline_keyboard: [[{ text: '🔄', callback_data: 'cad|im-2' }]] };
+  const stream = client.openThinkingStream({ chatId: 42 }, { traceMarkup });
+
+  await stream.sendThinking('thinking');
+  const result = await stream.finish({ text: 'ответ', format: 'markdown' });
+
+  assert.equal(result.deliveryOutcome, 'unknown');
+  assert.deepEqual(markups, [], 'the button must survive the failure it exists for');
+});
+
+test('A17: a stream without a retry keyboard never edits markups', async () => {
+  const sent = [];
+  const markups = [];
+  const api = {
+    sendMessage: async (params) => { sent.push(params); return { message_id: 8700 + sent.length }; },
+    editMessageReplyMarkup: async (params) => { markups.push(params); return true; },
+    sendRichMessage: async () => ({ message_id: 9700 }),
+  };
+  const client = new TelegramBotClient({ api, signal: undefined, logger: quietLogger });
+  const stream = client.openThinkingStream({ chatId: 42 });
+
+  await stream.sendThinking('thinking');
+  await stream.finish({ text: 'ответ', format: 'markdown' });
+
+  assert.equal(sent[0].replyMarkup, undefined);
+  assert.deepEqual(markups, []);
+});

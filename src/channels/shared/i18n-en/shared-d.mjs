@@ -71,6 +71,13 @@ export default {
   '已重新发送。': 'Resent.',
   '再次发送失败，稍后再试。': 'Sending failed again. Try later.',
   '这条通知已失效。': 'This notice is no longer valid.',
+  '重新发送这一轮的答复': 'Send the answer',
+  '正在查找这一轮的答复…': 'Looking up this turn\'s answer…',
+  '暂时无法读取这一轮的答复，请稍后再试。': 'This turn\'s answer could not be read. Try again later.',
+  '这一轮还在进行中，等它结束后再按一次。': 'The turn is still running. Press again once it ends.',
+  '这一轮没有可用的文字答复。': 'This turn has no text answer.',
+  '这个按钮已失效。': 'This button no longer works.',
+  '这条会话已失效。': 'This session is no longer available.',
   '列出本聊天使用过的会话（按聊天/话题隔离）': "List this chat's sessions (per chat / per topic)",
   '/ls 或 /list  列出本聊天使用过的会话（● 当前，←/→ 可前后切换，✕ 已失效；列表按聊天隔离，论坛群按话题）':
     '/ls or /list  List this chat\'s sessions (● current, ←/→ navigate, ✕ unavailable; the list is per chat, and per topic in forum groups)',
